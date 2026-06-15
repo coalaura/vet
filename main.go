@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -429,48 +432,99 @@ func captureCommandOutput(run func() int) ([]byte, int, error) {
 }
 
 func renderDiagnostics(cwd string, out []byte) (bool, error) {
-	dec := json.NewDecoder(bytes.NewReader(out))
+	diagnostics, err := decodeDiagnostics(out)
+	if err != nil {
+		return false, err
+	}
 
-	var issued bool
+	if len(diagnostics) == 0 {
+		return false, nil
+	}
 
-	for {
-		var diag Diagnostic
+	fileMap := make(map[string][]Diagnostic, len(diagnostics))
 
-		err := dec.Decode(&diag)
+	for _, diag := range diagnostics {
+		path := relPath(cwd, diag.Location.File)
+
+		fileMap[path] = append(fileMap[path], diag)
+	}
+
+	files := slices.Sorted(maps.Keys(fileMap))
+
+	for _, file := range files {
+		_, err = fmt.Fprintf(os.Stdout, " \033[36m%s\033[0m\n", file)
 		if err != nil {
-			if err == io.EOF {
-				return issued, nil
+			return false, fmt.Errorf("write file header: %w", err)
+		}
+
+		diags := fileMap[file]
+
+		slices.SortFunc(diags, func(diagA, diagB Diagnostic) int {
+			return cmp.Or(
+				cmp.Compare(diagA.Location.Line, diagB.Location.Line),
+				cmp.Compare(diagA.Location.Column, diagB.Location.Column),
+			)
+		})
+
+		var maxLoc int
+
+		for _, diag := range diags {
+			loc := fmt.Sprintf("%d:%d:", diag.Location.Line, diag.Location.Column)
+
+			maxLoc = max(maxLoc, len(loc))
+		}
+
+		for _, diag := range diags {
+			loc := fmt.Sprintf("%d:%d:", diag.Location.Line, diag.Location.Column)
+
+			_, err = fmt.Fprintf(os.Stdout, "   \033[97m%-*s\033[0m  \033[3m%s\033[0m \033[90m(%s)\033[0m\n", maxLoc, loc, diag.Message, diag.Code)
+			if err != nil {
+				return false, fmt.Errorf("write diagnostic: %w", err)
 			}
 
-			return false, fmt.Errorf("decode diagnostic stream: %w", err)
-		}
+			for _, related := range diag.Related {
+				rf := relPath(cwd, related.Location.File)
 
-		issued = true
+				var loc string
 
-		file := relPath(cwd, diag.Location.File)
-		line := diag.Location.Line
-		col := diag.Location.Column
+				if rf == file {
+					loc = fmt.Sprintf("%d:%d:", related.Location.Line, related.Location.Column)
+				} else {
+					loc = fmt.Sprintf("%s:%d:%d:", rf, related.Location.Line, related.Location.Column)
+				}
 
-		color := "\033[36m"
-
-		if diag.Severity == "error" || strings.HasPrefix(diag.Code, "compile") || diag.Code == "config" {
-			color = "\033[31m"
-		}
-
-		_, err = fmt.Fprintf(os.Stdout, "   %s-> %s:%d:%d\033[0m \033[90m(%s)\033[0m %s\n", color, file, line, col, diag.Code, diag.Message)
-		if err != nil {
-			return false, fmt.Errorf("write diagnostic: %w", err)
-		}
-
-		for _, rel := range diag.Related {
-			rf := relPath(cwd, rel.Location.File)
-
-			_, err = fmt.Fprintf(os.Stdout, "   \033[90m-> %s:%d:%d\033[0m %s\n", rf, rel.Location.Line, rel.Location.Column, rel.Message)
-			if err != nil {
-				return false, fmt.Errorf("write related diagnostic: %w", err)
+				_, err = fmt.Fprintf(os.Stdout, "      \033[97m→ %s\033[0m  \033[3m%s\033[0m\n", loc, related.Message)
+				if err != nil {
+					return false, fmt.Errorf("write related diagnostic: %w", err)
+				}
 			}
 		}
 	}
+
+	return true, nil
+}
+
+func decodeDiagnostics(out []byte) ([]Diagnostic, error) {
+	dec := json.NewDecoder(bytes.NewReader(out))
+
+	var diags []Diagnostic
+
+	for {
+		var d Diagnostic
+
+		err := dec.Decode(&d)
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("decode diagnostic stream: %w", err)
+		}
+
+		diags = append(diags, d)
+	}
+
+	return diags, nil
 }
 
 func looksLikeJSONStream(b []byte) bool {
