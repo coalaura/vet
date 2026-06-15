@@ -70,18 +70,133 @@ type Diagnostic struct {
 	Message  string    `json:"message"`
 }
 
+type lintOptions struct {
+	Packages    []string
+	Checks      string
+	Explain     string
+	Fail        string
+	GoVersion   string
+	Tags        string
+	ListChecks  bool
+	Matrix      bool
+	Merge       bool
+	ShowIgnored bool
+	Tests       bool
+}
+
 var Version = "dev"
 
 func main() {
-	var exitCode int
+	var (
+		exitCode     int
+		printVersion bool
+
+		checks      = "inherit"
+		explain     string
+		fail        = "all"
+		goVersion   = "module"
+		listChecks  bool
+		matrix      bool
+		merge       bool
+		showIgnored bool
+		tags        string
+		tests       = true
+	)
 
 	app := &cli.Command{
-		Name:            "vet",
-		Usage:           "run analyzers and pretty-print diagnostics",
-		Version:         Version,
-		SkipFlagParsing: true,
+		Name:                   "vet",
+		Usage:                  "run analyzers and pretty-print diagnostics",
+		UsageText:              "vet [options] [packages]",
+		Version:                Version,
+		HideVersion:            true,
+		UseShortOptionHandling: true,
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:        "checks",
+				Usage:       "comma-separated list of checks to enable",
+				Value:       "inherit",
+				Destination: &checks,
+			},
+			&cli.StringFlag{
+				Name:        "explain",
+				Usage:       "print description of check",
+				Destination: &explain,
+			},
+			&cli.StringFlag{
+				Name:        "fail",
+				Usage:       "comma-separated list of checks that can cause a non-zero exit status",
+				Value:       "all",
+				Destination: &fail,
+			},
+			&cli.StringFlag{
+				Name:        "go",
+				Usage:       "target Go version in the format '1.x' or 'module'",
+				Value:       "module",
+				Destination: &goVersion,
+			},
+			&cli.BoolFlag{
+				Name:        "list-checks",
+				Usage:       "list all available checks",
+				Destination: &listChecks,
+			},
+			&cli.BoolFlag{
+				Name:        "matrix",
+				Usage:       "read a build config matrix from stdin",
+				Destination: &matrix,
+			},
+			&cli.BoolFlag{
+				Name:        "merge",
+				Usage:       "merge results of multiple runs",
+				Destination: &merge,
+			},
+			&cli.BoolFlag{
+				Name:        "show-ignored",
+				Usage:       "don't filter ignored diagnostics",
+				Destination: &showIgnored,
+			},
+			&cli.StringFlag{
+				Name:        "tags",
+				Usage:       "list of build tags",
+				Destination: &tags,
+			},
+			&cli.BoolFlag{
+				Name:        "tests",
+				Usage:       "include tests",
+				Value:       true,
+				Destination: &tests,
+			},
+			&cli.BoolFlag{
+				Name:        "version",
+				Aliases:     []string{"v"},
+				Usage:       "print version and exit",
+				Destination: &printVersion,
+			},
+		},
 		Action: func(_ context.Context, c *cli.Command) error {
-			code, err := run(c.Args().Slice())
+			if printVersion {
+				_, err := fmt.Fprintln(os.Stdout, Version)
+				if err != nil {
+					return fmt.Errorf("write version: %w", err)
+				}
+
+				exitCode = 0
+
+				return nil
+			}
+
+			code, err := run(buildLintArgs(lintOptions{
+				Checks:      checks,
+				Explain:     explain,
+				Fail:        fail,
+				GoVersion:   goVersion,
+				ListChecks:  listChecks,
+				Matrix:      matrix,
+				Merge:       merge,
+				ShowIgnored: showIgnored,
+				Tags:        tags,
+				Tests:       tests,
+				Packages:    c.Args().Slice(),
+			}))
 			if err != nil {
 				return err
 			}
@@ -102,10 +217,10 @@ func main() {
 	os.Exit(exitCode)
 }
 
-func run(rawArgs []string) (int, error) {
+func run(lintArgs []string) (int, error) {
 	cmd := newLintCommand()
 
-	cmd.ParseFlags(forceJSONFormat(rawArgs))
+	cmd.ParseFlags(forceJSONFormat(lintArgs))
 
 	out, code, err := captureCommandOutput(cmd.Execute)
 	if err != nil {
@@ -128,9 +243,9 @@ func run(rawArgs []string) (int, error) {
 
 	issued, err := renderDiagnostics(cwd, out)
 	if err != nil {
-		_, err = os.Stdout.Write(out)
-		if err != nil {
-			return 2, fmt.Errorf("decode diagnostics: %v; write raw output: %w", err, err)
+		_, writeErr := os.Stdout.Write(out)
+		if writeErr != nil {
+			return 2, fmt.Errorf("decode diagnostics: %v; write raw output: %w", err, writeErr)
 		}
 
 		return code, nil
@@ -141,6 +256,54 @@ func run(rawArgs []string) (int, error) {
 	}
 
 	return code, nil
+}
+
+func buildLintArgs(opts lintOptions) []string {
+	args := make([]string, 0, 16+len(opts.Packages))
+
+	if opts.Checks != "" && opts.Checks != "inherit" {
+		args = append(args, "-checks", opts.Checks)
+	}
+
+	if opts.Explain != "" {
+		args = append(args, "-explain", opts.Explain)
+	}
+
+	if opts.Fail != "" && opts.Fail != "all" {
+		args = append(args, "-fail", opts.Fail)
+	}
+
+	if opts.GoVersion != "" && opts.GoVersion != "module" {
+		args = append(args, "-go", opts.GoVersion)
+	}
+
+	if opts.ListChecks {
+		args = append(args, "-list-checks")
+	}
+
+	if opts.Matrix {
+		args = append(args, "-matrix")
+	}
+
+	if opts.Merge {
+		args = append(args, "-merge")
+	}
+
+	if opts.ShowIgnored {
+		args = append(args, "-show-ignored")
+	}
+
+	if opts.Tags != "" {
+		args = append(args, "-tags", opts.Tags)
+	}
+
+	if !opts.Tests {
+		args = append(args, "-tests=false")
+	}
+
+	args = append(args, opts.Packages...)
+
+	return args
 }
 
 func newLintCommand() *lintcmd.Command {
