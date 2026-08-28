@@ -20,6 +20,12 @@ Output is rendered as short, readable diagnostics.
 
 `./vet ./...`
 
+Analyze a different build target:
+
+`./vet --os windows --arch amd64 ./...`
+
+The `--os` and `--arch` options default to the operating system and architecture on which `vet` is running. They select one build target per invocation, including its build constraints and platform-specific filename suffixes.
+
 You can pass package patterns and the options shown by `vet --help`. The tool forces JSON output internally and prints compact lines.
 
 ## Exit codes

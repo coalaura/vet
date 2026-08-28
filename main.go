@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -64,10 +65,10 @@ type lintOptions struct {
 	Explain     string
 	Fail        string
 	GoVersion   string
+	GOARCH      string
+	GOOS        string
 	Tags        string
 	ListChecks  bool
-	Matrix      bool
-	Merge       bool
 	ShowIgnored bool
 	Tests       bool
 }
@@ -84,10 +85,10 @@ func main() {
 		fail        = "all"
 		goVersion   = "module"
 		listChecks  bool
-		matrix      bool
-		merge       bool
 		showIgnored bool
 		tags        string
+		targetArch  = runtime.GOARCH
+		targetOS    = runtime.GOOS
 		tests       = true
 	)
 
@@ -99,6 +100,12 @@ func main() {
 		HideVersion:            true,
 		UseShortOptionHandling: true,
 		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:        "arch",
+				Usage:       "target architecture (GOARCH)",
+				Value:       runtime.GOARCH,
+				Destination: &targetArch,
+			},
 			&cli.StringFlag{
 				Name:        "checks",
 				Usage:       "comma-separated list of checks to enable",
@@ -127,15 +134,11 @@ func main() {
 				Usage:       "list all available checks",
 				Destination: &listChecks,
 			},
-			&cli.BoolFlag{
-				Name:        "matrix",
-				Usage:       "read a build config matrix from stdin",
-				Destination: &matrix,
-			},
-			&cli.BoolFlag{
-				Name:        "merge",
-				Usage:       "merge results of multiple runs",
-				Destination: &merge,
+			&cli.StringFlag{
+				Name:        "os",
+				Usage:       "target operating system (GOOS)",
+				Value:       runtime.GOOS,
+				Destination: &targetOS,
 			},
 			&cli.BoolFlag{
 				Name:        "show-ignored",
@@ -172,19 +175,19 @@ func main() {
 				return nil
 			}
 
-			code, err := run(buildLintArgs(lintOptions{
+			code, err := run(lintOptions{
 				Checks:      checks,
 				Explain:     explain,
 				Fail:        fail,
 				GoVersion:   goVersion,
+				GOARCH:      targetArch,
+				GOOS:        targetOS,
 				ListChecks:  listChecks,
-				Matrix:      matrix,
-				Merge:       merge,
 				ShowIgnored: showIgnored,
 				Tags:        tags,
 				Tests:       tests,
 				Packages:    c.Args().Slice(),
-			}))
+			})
 
 			if err != nil {
 				return err
@@ -206,14 +209,28 @@ func main() {
 	os.Exit(exitCode)
 }
 
-func run(lintArgs []string) (int, error) {
+func run(opts lintOptions) (int, error) {
+	err := setBuildTarget(opts.GOOS, opts.GOARCH)
+	if err != nil {
+		return 2, err
+	}
+
 	cmd := newLintCommand()
 
-	cmd.ParseFlags(forceJSONFormat(lintArgs))
+	cmd.ParseFlags(forceJSONFormat(buildLintArgs(opts)))
 
 	out, code, err := captureCommandOutput(cmd.Execute)
 	if err != nil {
 		return 2, err
+	}
+
+	if code == 0 && len(bytes.TrimSpace(out)) == 0 {
+		_, err = fmt.Fprintln(os.Stdout, "\x1b[32m::\x1b[0m no issues found")
+		if err != nil {
+			return 2, fmt.Errorf("write success message: %w", err)
+		}
+
+		return code, nil
 	}
 
 	if !looksLikeJSONStream(out) {
@@ -247,6 +264,37 @@ func run(lintArgs []string) (int, error) {
 	return code, nil
 }
 
+func setBuildTarget(targetOS, targetArch string) error {
+	if targetOS == "" {
+		return errors.New("GOOS must not be empty")
+	}
+
+	if targetArch == "" {
+		return errors.New("GOARCH must not be empty")
+	}
+
+	err := os.Setenv("GOOS", targetOS)
+	if err != nil {
+		return fmt.Errorf("set GOOS to %q: %w", targetOS, err)
+	}
+
+	err = os.Setenv("GOARCH", targetArch)
+	if err != nil {
+		return fmt.Errorf("set GOARCH to %q: %w", targetArch, err)
+	}
+
+	if targetOS == runtime.GOOS && targetArch == runtime.GOARCH {
+		return nil
+	}
+
+	err = os.Setenv("CGO_ENABLED", "0")
+	if err != nil {
+		return fmt.Errorf("disable cgo: %w", err)
+	}
+
+	return nil
+}
+
 func buildLintArgs(opts lintOptions) []string {
 	args := make([]string, 0, 16+len(opts.Packages))
 
@@ -268,14 +316,6 @@ func buildLintArgs(opts lintOptions) []string {
 
 	if opts.ListChecks {
 		args = append(args, "-list-checks")
-	}
-
-	if opts.Matrix {
-		args = append(args, "-matrix")
-	}
-
-	if opts.Merge {
-		args = append(args, "-merge")
 	}
 
 	if opts.ShowIgnored {
