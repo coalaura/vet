@@ -491,6 +491,7 @@ func captureCommandOutput(run func() int) ([]byte, int, error) {
 	if copyErr != nil {
 		return nil, code, fmt.Errorf("read analyzer output: %w", copyErr)
 	}
+
 	if readCloseErr != nil {
 		return nil, code, fmt.Errorf("close output pipe reader: %w", readCloseErr)
 	}
