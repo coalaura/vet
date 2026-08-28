@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -16,42 +17,26 @@ import (
 
 	"github.com/urfave/cli/v3"
 	"honnef.co/go/tools/lintcmd"
+	"honnef.co/go/tools/quickfix"
 	"honnef.co/go/tools/simple"
 	"honnef.co/go/tools/staticcheck"
 	"honnef.co/go/tools/stylecheck"
 	"honnef.co/go/tools/unused"
 
-	"golang.org/x/tools/go/analysis/passes/appends"
-	"golang.org/x/tools/go/analysis/passes/asmdecl"
-	"golang.org/x/tools/go/analysis/passes/assign"
-	"golang.org/x/tools/go/analysis/passes/atomic"
-	"golang.org/x/tools/go/analysis/passes/bools"
-	"golang.org/x/tools/go/analysis/passes/buildtag"
-	"golang.org/x/tools/go/analysis/passes/cgocall"
-	"golang.org/x/tools/go/analysis/passes/composite"
-	"golang.org/x/tools/go/analysis/passes/copylock"
-	"golang.org/x/tools/go/analysis/passes/directive"
-	"golang.org/x/tools/go/analysis/passes/errorsas"
-	"golang.org/x/tools/go/analysis/passes/framepointer"
-	"golang.org/x/tools/go/analysis/passes/httpresponse"
-	"golang.org/x/tools/go/analysis/passes/ifaceassert"
-	"golang.org/x/tools/go/analysis/passes/loopclosure"
-	"golang.org/x/tools/go/analysis/passes/lostcancel"
+	"github.com/charithe/durationcheck"
+	"github.com/polyfloyd/go-errorlint/errorlint"
+	"github.com/timakin/bodyclose/passes/bodyclose"
+
+	"golang.org/x/tools/go/analysis/passes/atomicalign"
+	"golang.org/x/tools/go/analysis/passes/deepequalerrors"
 	"golang.org/x/tools/go/analysis/passes/modernize"
-	"golang.org/x/tools/go/analysis/passes/nilfunc"
-	"golang.org/x/tools/go/analysis/passes/printf"
-	"golang.org/x/tools/go/analysis/passes/shift"
-	"golang.org/x/tools/go/analysis/passes/sigchanyzer"
-	"golang.org/x/tools/go/analysis/passes/stdmethods"
-	"golang.org/x/tools/go/analysis/passes/stringintconv"
-	"golang.org/x/tools/go/analysis/passes/structtag"
-	"golang.org/x/tools/go/analysis/passes/testinggoroutine"
-	"golang.org/x/tools/go/analysis/passes/tests"
-	"golang.org/x/tools/go/analysis/passes/timeformat"
-	"golang.org/x/tools/go/analysis/passes/unmarshal"
-	"golang.org/x/tools/go/analysis/passes/unreachable"
-	"golang.org/x/tools/go/analysis/passes/unsafeptr"
-	"golang.org/x/tools/go/analysis/passes/unusedresult"
+	"golang.org/x/tools/go/analysis/passes/nilness"
+	"golang.org/x/tools/go/analysis/passes/reflectvaluecompare"
+	"golang.org/x/tools/go/analysis/passes/sortslice"
+	"golang.org/x/tools/go/analysis/passes/unusedwrite"
+	vetsuite "golang.org/x/tools/go/analysis/suite/vet"
+
+	"github.com/coalaura/vet/houserules"
 )
 
 type Location struct {
@@ -200,6 +185,7 @@ func main() {
 				Tests:       tests,
 				Packages:    c.Args().Slice(),
 			}))
+
 			if err != nil {
 				return err
 			}
@@ -244,18 +230,18 @@ func run(lintArgs []string) (int, error) {
 		cwd = ""
 	}
 
-	issued, err := renderDiagnostics(cwd, out)
+	err = renderDiagnostics(cwd, out)
 	if err != nil {
 		_, writeErr := os.Stdout.Write(out)
 		if writeErr != nil {
-			return 2, fmt.Errorf("decode diagnostics: %v; write raw output: %w", err, writeErr)
+			return 2, fmt.Errorf(
+				"decode diagnostics: %v; write raw output: %w",
+				err,
+				writeErr,
+			)
 		}
 
 		return code, nil
-	}
-
-	if issued {
-		return 1, nil
 	}
 
 	return code, nil
@@ -311,50 +297,54 @@ func buildLintArgs(opts lintOptions) []string {
 
 func newLintCommand() *lintcmd.Command {
 	cmd := lintcmd.NewCommand("vet")
-	cmd.SetVersion("1.0.0", "v1.0.0")
 
-	// go vet analyzers
+	cmd.SetVersion(strings.TrimPrefix(Version, "v"), Version)
+
+	// Standard Go vet
+	cmd.AddBareAnalyzers(vetsuite.Suite...)
+
+	// Additional x/tools correctness analyzers
 	cmd.AddBareAnalyzers(
-		appends.Analyzer,
-		asmdecl.Analyzer,
-		assign.Analyzer,
-		atomic.Analyzer,
-		bools.Analyzer,
-		buildtag.Analyzer,
-		cgocall.Analyzer,
-		composite.Analyzer,
-		copylock.Analyzer,
-		directive.Analyzer,
-		errorsas.Analyzer,
-		framepointer.Analyzer,
-		httpresponse.Analyzer,
-		ifaceassert.Analyzer,
-		loopclosure.Analyzer,
-		lostcancel.Analyzer,
-		nilfunc.Analyzer,
-		printf.Analyzer,
-		shift.Analyzer,
-		sigchanyzer.Analyzer,
-		stdmethods.Analyzer,
-		stringintconv.Analyzer,
-		structtag.Analyzer,
-		testinggoroutine.Analyzer,
-		tests.Analyzer,
-		timeformat.Analyzer,
-		unmarshal.Analyzer,
-		unreachable.Analyzer,
-		unsafeptr.Analyzer,
-		unusedresult.Analyzer,
+		nilness.Analyzer,
+		unusedwrite.Analyzer,
+		atomicalign.Analyzer,
+		deepequalerrors.Analyzer,
+		reflectvaluecompare.Analyzer,
+		sortslice.Analyzer,
 	)
 
-	// staticcheck analyzers
+	// Staticcheck
 	cmd.AddAnalyzers(simple.Analyzers...)
 	cmd.AddAnalyzers(staticcheck.Analyzers...)
 	cmd.AddAnalyzers(stylecheck.Analyzers...)
 	cmd.AddAnalyzers(unused.Analyzer)
 
-	// modernize analyzers
+	// Staticcheck quick fixes
+	cmd.AddAnalyzers(quickfix.Analyzers...)
+
+	// Modern Go patterns
 	cmd.AddBareAnalyzers(modernize.Suite...)
+
+	// Error handling correctness
+	cmd.AddBareAnalyzers(
+		errorlint.NewAnalyzer(),
+	)
+
+	// Resource correctness
+	cmd.AddBareAnalyzers(
+		bodyclose.Analyzer,
+	)
+
+	// Suspicious duration arithmetic
+	cmd.AddBareAnalyzers(
+		durationcheck.Analyzer,
+	)
+
+	// House rules
+	cmd.AddBareAnalyzers(
+		houserules.Analyzer,
+		houserules.Breathe,
+	)
 
 	return cmd
 }
@@ -431,14 +421,14 @@ func captureCommandOutput(run func() int) ([]byte, int, error) {
 	return buf.Bytes(), code, nil
 }
 
-func renderDiagnostics(cwd string, out []byte) (bool, error) {
+func renderDiagnostics(cwd string, out []byte) error {
 	diagnostics, err := decodeDiagnostics(out)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	if len(diagnostics) == 0 {
-		return false, nil
+		return nil
 	}
 
 	fileMap := make(map[string][]Diagnostic, len(diagnostics))
@@ -454,7 +444,7 @@ func renderDiagnostics(cwd string, out []byte) (bool, error) {
 	for _, file := range files {
 		_, err = fmt.Fprintf(os.Stdout, " \033[36m%s\033[0m\n", file)
 		if err != nil {
-			return false, fmt.Errorf("write file header: %w", err)
+			return fmt.Errorf("write file header: %w", err)
 		}
 
 		diags := fileMap[file]
@@ -463,6 +453,8 @@ func renderDiagnostics(cwd string, out []byte) (bool, error) {
 			return cmp.Or(
 				cmp.Compare(diagA.Location.Line, diagB.Location.Line),
 				cmp.Compare(diagA.Location.Column, diagB.Location.Column),
+				cmp.Compare(diagA.Code, diagB.Code),
+				cmp.Compare(diagA.Message, diagB.Message),
 			)
 		})
 
@@ -479,7 +471,7 @@ func renderDiagnostics(cwd string, out []byte) (bool, error) {
 
 			_, err = fmt.Fprintf(os.Stdout, "   \033[97m%-*s\033[0m  \033[3m%s\033[0m \033[90m(%s)\033[0m\n", maxLoc, loc, diag.Message, diag.Code)
 			if err != nil {
-				return false, fmt.Errorf("write diagnostic: %w", err)
+				return fmt.Errorf("write diagnostic: %w", err)
 			}
 
 			for _, related := range diag.Related {
@@ -495,13 +487,13 @@ func renderDiagnostics(cwd string, out []byte) (bool, error) {
 
 				_, err = fmt.Fprintf(os.Stdout, "      \033[97m→ %s\033[0m  \033[3m%s\033[0m\n", loc, related.Message)
 				if err != nil {
-					return false, fmt.Errorf("write related diagnostic: %w", err)
+					return fmt.Errorf("write related diagnostic: %w", err)
 				}
 			}
 		}
 	}
 
-	return true, nil
+	return nil
 }
 
 func decodeDiagnostics(out []byte) ([]Diagnostic, error) {
@@ -513,7 +505,7 @@ func decodeDiagnostics(out []byte) ([]Diagnostic, error) {
 		var d Diagnostic
 
 		err := dec.Decode(&d)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 
@@ -533,15 +525,22 @@ func looksLikeJSONStream(b []byte) bool {
 	return len(b) > 0 && b[0] == '{'
 }
 
-func relPath(cwd, p string) string {
+func relPath(cwd, path string) string {
 	if cwd == "" {
-		return p
+		return path
 	}
 
-	r, err := filepath.Rel(cwd, p)
-	if err == nil && !strings.HasPrefix(r, "..") {
-		return r
+	relative, err := filepath.Rel(cwd, path)
+	if err != nil {
+		return path
 	}
 
-	return p
+	parentPrefix := ".." + string(os.PathSeparator)
+	outside := relative == ".." || strings.HasPrefix(relative, parentPrefix)
+
+	if outside {
+		return path
+	}
+
+	return relative
 }

@@ -3,9 +3,12 @@
 A small CLI wrapper for Go analyzers.
 
 It runs:
-- go vet analyzers
-- staticcheck, stylecheck and unused
+
+- Go vet and additional x/tools correctness analyzers
+- staticcheck, stylecheck, quickfix, and unused
 - modernize analyzers
+- error-handling, response-body, and duration checks
+- repository house rules
 
 Output is rendered as short, readable diagnostics.
 
@@ -17,7 +20,7 @@ Output is rendered as short, readable diagnostics.
 
 `./vet ./...`
 
-You can pass normal package patterns and analyzer args. The tool forces JSON output internally and prints compact lines.
+You can pass package patterns and the options shown by `vet --help`. The tool forces JSON output internally and prints compact lines.
 
 ## Exit codes
 
