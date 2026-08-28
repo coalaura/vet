@@ -330,7 +330,11 @@ func buildLintArgs(opts lintOptions) []string {
 		args = append(args, "-tests=false")
 	}
 
-	args = append(args, opts.Packages...)
+	if len(opts.Packages) == 0 {
+		args = append(args, "./...")
+	} else {
+		args = append(args, opts.Packages...)
+	}
 
 	return args
 }
@@ -453,7 +457,6 @@ func captureCommandOutput(run func() int) ([]byte, int, error) {
 	if copyErr != nil {
 		return nil, code, fmt.Errorf("read analyzer output: %w", copyErr)
 	}
-
 	if readCloseErr != nil {
 		return nil, code, fmt.Errorf("close output pipe reader: %w", readCloseErr)
 	}
