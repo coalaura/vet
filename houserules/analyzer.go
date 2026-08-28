@@ -19,10 +19,18 @@ func run(pass *analysis.Pass) (any, error) {
 			continue
 		}
 
+		checkFileVarDeclarations(pass, file.Decls)
+
 		declaredStructs := make(map[*ast.StructType]bool)
 
 		ast.Inspect(file, func(current ast.Node) bool {
 			switch node := current.(type) {
+			case *ast.BlockStmt:
+				checkStatementVarDeclarations(pass, node.List)
+			case *ast.CaseClause:
+				checkStatementVarDeclarations(pass, node.Body)
+			case *ast.CommClause:
+				checkStatementVarDeclarations(pass, node.Body)
 			case *ast.TypeSpec:
 				structType, ok := node.Type.(*ast.StructType)
 				if ok {
@@ -45,6 +53,10 @@ func run(pass *analysis.Pass) (any, error) {
 			case *ast.RangeStmt:
 				if isRangeLiteral(node.X) {
 					pass.Reportf(node.X.Pos(), "composite literal in range position: assign it to a named variable first")
+				}
+			case *ast.AssignStmt:
+				if len(node.Lhs) > 1 && len(node.Rhs) > 1 {
+					pass.Reportf(node.Pos(), "chained assignment: use one assignment per target")
 				}
 			case *ast.DeclStmt:
 				declaration, ok := node.Decl.(*ast.GenDecl)
@@ -71,6 +83,39 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 
 	return nil, nil
+}
+
+func checkFileVarDeclarations(pass *analysis.Pass, declarations []ast.Decl) {
+	for index := 1; index < len(declarations); index++ {
+		previous, previousOK := declarations[index-1].(*ast.GenDecl)
+		current, currentOK := declarations[index].(*ast.GenDecl)
+
+		if previousOK && currentOK && previous.Tok == token.VAR && current.Tok == token.VAR && pass.Fset.Position(current.Pos()).Line == pass.Fset.Position(previous.End()).Line+1 {
+			pass.Reportf(current.Pos(), "consecutive var declarations: combine them into a var block")
+		}
+	}
+}
+
+func checkStatementVarDeclarations(pass *analysis.Pass, statements []ast.Stmt) {
+	for index := 1; index < len(statements); index++ {
+		previous, previousOK := varDeclaration(statements[index-1])
+		current, currentOK := varDeclaration(statements[index])
+
+		if previousOK && currentOK && previous.Tok == token.VAR && current.Tok == token.VAR && pass.Fset.Position(current.Pos()).Line == pass.Fset.Position(previous.End()).Line+1 {
+			pass.Reportf(current.Pos(), "consecutive var declarations: combine them into a var block")
+		}
+	}
+}
+
+func varDeclaration(statement ast.Stmt) (*ast.GenDecl, bool) {
+	declarationStatement, ok := unlabel(statement).(*ast.DeclStmt)
+	if !ok {
+		return nil, false
+	}
+
+	declaration, ok := declarationStatement.Decl.(*ast.GenDecl)
+
+	return declaration, ok
 }
 
 func isRangeLiteral(expression ast.Expr) bool {

@@ -2,13 +2,14 @@ package houserules
 
 import (
 	"go/ast"
+	"go/token"
 
 	"golang.org/x/tools/go/analysis"
 )
 
 var Breathe = &analysis.Analyzer{
 	Name: "breathe",
-	Doc:  "reports missing blank lines around control-flow blocks",
+	Doc:  "reports missing blank lines around control flow, returns, breaks and var blocks",
 	Run:  runBreathe,
 }
 
@@ -48,12 +49,33 @@ func checkSpacing(pass *analysis.Pass, statements []ast.Stmt) {
 			continue
 		}
 
-		if nextStart == previousEnd {
+		if isControlFlow(previous) && previousEnd > pass.Fset.Position(previous.Pos()).Line {
+			pass.Reportf(next.Pos(), "missing blank line after control-flow block")
+
 			continue
 		}
 
-		if isControlFlow(previous) && previousEnd > pass.Fset.Position(previous.Pos()).Line {
-			pass.Reportf(next.Pos(), "missing blank line after control-flow block")
+		if isGroupedVarBlock(previous) {
+			pass.Reportf(next.Pos(), "missing blank line after var block")
+
+			continue
+		}
+
+		if isGroupedVarBlock(next) {
+			pass.Reportf(next.Pos(), "missing blank line before var block")
+
+			continue
+		}
+
+		if isBreak(next) {
+			pass.Reportf(next.Pos(), "missing blank line before break")
+
+			continue
+		}
+
+		returnStatement, isReturn := unlabel(next).(*ast.ReturnStmt)
+		if isReturn && !introducesReturn(previous, returnStatement) {
+			pass.Reportf(next.Pos(), "missing blank line before return: only a statement feeding its result may sit directly above")
 
 			continue
 		}
@@ -77,6 +99,28 @@ func introduces(previous, next ast.Stmt) bool {
 	for _, target := range assignment.Lhs {
 		identifier, ok := target.(*ast.Ident)
 		if ok && header[identifier.Name] {
+			return true
+		}
+	}
+
+	return false
+}
+
+func introducesReturn(previous ast.Stmt, returnStatement *ast.ReturnStmt) bool {
+	assignment, ok := unlabel(previous).(*ast.AssignStmt)
+	if !ok {
+		return false
+	}
+
+	resultNames := make(map[string]bool)
+
+	for _, result := range returnStatement.Results {
+		collectIdents(resultNames, result)
+	}
+
+	for _, target := range assignment.Lhs {
+		identifier, ok := target.(*ast.Ident)
+		if ok && resultNames[identifier.Name] {
 			return true
 		}
 	}
@@ -130,6 +174,18 @@ func isControlFlow(statement ast.Stmt) bool {
 	}
 
 	return false
+}
+
+func isGroupedVarBlock(statement ast.Stmt) bool {
+	declaration, ok := varDeclaration(statement)
+
+	return ok && declaration.Tok == token.VAR && declaration.Lparen.IsValid()
+}
+
+func isBreak(statement ast.Stmt) bool {
+	branch, ok := unlabel(statement).(*ast.BranchStmt)
+
+	return ok && branch.Tok == token.BREAK
 }
 
 func unlabel(statement ast.Stmt) ast.Stmt {

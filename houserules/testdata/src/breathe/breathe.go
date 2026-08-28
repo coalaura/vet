@@ -33,6 +33,53 @@ func allowed(items []int) error {
 	return nil
 }
 
+func breakViolations() {
+	for {
+		work()
+		break // want `missing blank line before break`
+	}
+}
+
+func sameLineBreakViolation() {
+	for {
+		work(); break // want `missing blank line before break`
+	}
+}
+
+func returnViolations() error {
+	work()
+	return nil // want `missing blank line before return`
+}
+
+func varBlockViolations() {
+	value := 1
+	var ( // want `missing blank line before var block`
+		_ int
+	)
+	_ = value // want `missing blank line after var block`
+}
+
+func allowedBoundaries() error {
+	var (
+		_ int
+	)
+
+	for {
+		break
+	}
+
+	err := work()
+	return err
+}
+
+func allowedTrailingVarBlock() {
+	work()
+
+	var (
+		_ int
+	)
+}
+
 func work() error {
 	return nil
 }
