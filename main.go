@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"maps"
 	"os"
@@ -25,6 +28,8 @@ import (
 	"honnef.co/go/tools/unused"
 
 	"github.com/charithe/durationcheck"
+	"github.com/coalaura/builder/goenv"
+	"github.com/coalaura/vet/houserules"
 	"github.com/polyfloyd/go-errorlint/errorlint"
 	"github.com/timakin/bodyclose/passes/bodyclose"
 
@@ -36,8 +41,6 @@ import (
 	"golang.org/x/tools/go/analysis/passes/sortslice"
 	"golang.org/x/tools/go/analysis/passes/unusedwrite"
 	vetsuite "golang.org/x/tools/go/analysis/suite/vet"
-
-	"github.com/coalaura/vet/houserules"
 )
 
 type Location struct {
@@ -71,6 +74,7 @@ type lintOptions struct {
 	ListChecks  bool
 	ShowIgnored bool
 	Tests       bool
+	CGO         bool
 }
 
 var Version = "dev"
@@ -81,6 +85,7 @@ func main() {
 		printVersion bool
 
 		checks      = "inherit"
+		cgoEnabled  bool
 		explain     string
 		fail        = "all"
 		goVersion   = "module"
@@ -105,6 +110,11 @@ func main() {
 				Usage:       "target architecture (GOARCH)",
 				Value:       runtime.GOARCH,
 				Destination: &targetArch,
+			},
+			&cli.BoolFlag{
+				Name:        "cgo",
+				Usage:       "enable cgo with reproducible compiler settings",
+				Destination: &cgoEnabled,
 			},
 			&cli.StringFlag{
 				Name:        "checks",
@@ -176,6 +186,7 @@ func main() {
 			}
 
 			code, err := run(lintOptions{
+				CGO:         cgoEnabled,
 				Checks:      checks,
 				Explain:     explain,
 				Fail:        fail,
@@ -210,10 +221,12 @@ func main() {
 }
 
 func run(opts lintOptions) (int, error) {
-	err := setBuildTarget(opts.GOOS, opts.GOARCH)
+	tags, err := setBuildTarget(opts.GOOS, opts.GOARCH, opts.CGO, opts.Tags)
 	if err != nil {
 		return 2, err
 	}
+
+	opts.Tags = tags
 
 	cmd := newLintCommand()
 
@@ -247,7 +260,7 @@ func run(opts lintOptions) (int, error) {
 		cwd = ""
 	}
 
-	err = renderDiagnostics(cwd, out)
+	diagnosticCount, err := renderDiagnostics(cwd, out)
 	if err != nil {
 		_, writeErr := os.Stdout.Write(out)
 		if writeErr != nil {
@@ -261,38 +274,59 @@ func run(opts lintOptions) (int, error) {
 		return code, nil
 	}
 
+	if diagnosticCount == 0 {
+		_, err = fmt.Fprintln(os.Stdout, "\x1b[32m::\x1b[0m no issues found")
+		if err != nil {
+			return 2, fmt.Errorf("write success message: %w", err)
+		}
+
+		return 0, nil
+	}
+
 	return code, nil
 }
 
-func setBuildTarget(targetOS, targetArch string) error {
+func setBuildTarget(targetOS, targetArch string, cgoEnabled bool, tags string) (string, error) {
 	if targetOS == "" {
-		return errors.New("GOOS must not be empty")
+		return "", errors.New("GOOS must not be empty")
 	}
 
 	if targetArch == "" {
-		return errors.New("GOARCH must not be empty")
+		return "", errors.New("GOARCH must not be empty")
 	}
 
-	err := os.Setenv("GOOS", targetOS)
-	if err != nil {
-		return fmt.Errorf("set GOOS to %q: %w", targetOS, err)
+	config := goenv.Prepare(goenv.Options{
+		Tags: strings.Split(tags, ","),
+		OS:   targetOS,
+		Arch: targetArch,
+		CGO:  cgoEnabled,
+	})
+
+	for key, value := range config.Env {
+		var err error
+
+		if value == "" {
+			err = os.Unsetenv(key)
+		} else {
+			err = os.Setenv(key, value)
+		}
+
+		if err != nil {
+			return "", fmt.Errorf("set build environment %s: %w", key, err)
+		}
 	}
 
-	err = os.Setenv("GOARCH", targetArch)
-	if err != nil {
-		return fmt.Errorf("set GOARCH to %q: %w", targetArch, err)
+	return buildTags(config.BuildFlags), nil
+}
+
+func buildTags(buildFlags []string) string {
+	for index, flag := range buildFlags {
+		if flag == "-tags" && index+1 < len(buildFlags) {
+			return buildFlags[index+1]
+		}
 	}
 
-	if targetOS == runtime.GOOS && targetArch == runtime.GOARCH {
-		return nil
-	}
-
-	err = os.Setenv("CGO_ENABLED", "0")
-	if err != nil {
-		return fmt.Errorf("disable cgo: %w", err)
-	}
-
-	return nil
+	return ""
 }
 
 func buildLintArgs(opts lintOptions) []string {
@@ -464,33 +498,47 @@ func captureCommandOutput(run func() int) ([]byte, int, error) {
 	return buf.Bytes(), code, nil
 }
 
-func renderDiagnostics(cwd string, out []byte) error {
+func renderDiagnostics(cwd string, out []byte) (int, error) {
 	diagnostics, err := decodeDiagnostics(out)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	if len(diagnostics) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	fileMap := make(map[string][]Diagnostic, len(diagnostics))
+	generatedFiles := make(map[string]bool)
 
 	for _, diag := range diagnostics {
+		generated, checked := generatedFiles[diag.Location.File]
+		if !checked {
+			generated = isGeneratedFile(diag.Location.File)
+			generatedFiles[diag.Location.File] = generated
+		}
+
+		if generated {
+			continue
+		}
+
 		path := relPath(cwd, diag.Location.File)
 
 		fileMap[path] = append(fileMap[path], diag)
 	}
+
+	diagnosticCount := 0
 
 	files := slices.Sorted(maps.Keys(fileMap))
 
 	for _, file := range files {
 		_, err = fmt.Fprintf(os.Stdout, " \033[36m%s\033[0m\n", file)
 		if err != nil {
-			return fmt.Errorf("write file header: %w", err)
+			return 0, fmt.Errorf("write file header: %w", err)
 		}
 
 		diags := fileMap[file]
+		diagnosticCount += len(diags)
 
 		slices.SortFunc(diags, func(diagA, diagB Diagnostic) int {
 			return cmp.Or(
@@ -514,7 +562,7 @@ func renderDiagnostics(cwd string, out []byte) error {
 
 			_, err = fmt.Fprintf(os.Stdout, "   \033[97m%-*s\033[0m  \033[3m%s\033[0m \033[90m(%s)\033[0m\n", maxLoc, loc, diag.Message, diag.Code)
 			if err != nil {
-				return fmt.Errorf("write diagnostic: %w", err)
+				return 0, fmt.Errorf("write diagnostic: %w", err)
 			}
 
 			for _, related := range diag.Related {
@@ -530,13 +578,23 @@ func renderDiagnostics(cwd string, out []byte) error {
 
 				_, err = fmt.Fprintf(os.Stdout, "      \033[97m→ %s\033[0m  \033[3m%s\033[0m\n", loc, related.Message)
 				if err != nil {
-					return fmt.Errorf("write related diagnostic: %w", err)
+					return 0, fmt.Errorf("write related diagnostic: %w", err)
 				}
 			}
 		}
 	}
 
-	return nil
+	return diagnosticCount, nil
+}
+
+func isGeneratedFile(path string) bool {
+	fileSet := token.NewFileSet()
+	file, err := parser.ParseFile(fileSet, path, nil, parser.PackageClauseOnly|parser.ParseComments)
+	if err != nil {
+		return false
+	}
+
+	return ast.IsGenerated(file)
 }
 
 func decodeDiagnostics(out []byte) ([]Diagnostic, error) {

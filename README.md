@@ -18,7 +18,7 @@ Output is rendered as short, readable diagnostics.
 
 ## Usage
 
-`./vet ./...`
+`./vet`
 
 Analyze a different build target:
 
@@ -26,7 +26,9 @@ Analyze a different build target:
 
 The `--os` and `--arch` options default to the operating system and architecture on which `vet` is running. They select one build target per invocation, including its build constraints and platform-specific filename suffixes.
 
-You can pass package patterns and the options shown by `vet --help`. The tool forces JSON output internally and prints compact lines.
+CGO is disabled by default. Enable it with `./vet --cgo`; vet configures Zig as the C and C++ compiler for the selected target.
+
+With no package patterns, vet analyzes `./...`. You can pass explicit package patterns and the options shown by `vet --help`. The tool forces JSON output internally and prints compact lines.
 
 ## Exit codes
 

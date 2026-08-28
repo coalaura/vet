@@ -4,6 +4,7 @@ go 1.27.0
 
 require (
 	github.com/charithe/durationcheck v0.0.11
+	github.com/coalaura/builder v0.2.1
 	github.com/polyfloyd/go-errorlint v1.8.0
 	github.com/timakin/bodyclose v0.0.0-20260723120731-857993a2939c
 	github.com/urfave/cli/v3 v3.11.0
