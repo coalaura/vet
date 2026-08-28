@@ -1,6 +1,6 @@
 # vet
 
-A small CLI wrapper for Go analyzers.
+A small heavily opinionated CLI wrapper for Go analyzers.
 
 It runs:
 
