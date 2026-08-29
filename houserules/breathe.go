@@ -9,7 +9,7 @@ import (
 
 var Breathe = &analysis.Analyzer{
 	Name: "breathe",
-	Doc:  "reports missing blank lines around control flow, returns, branches and var blocks",
+	Doc:  "reports missing blank lines around control flow, function literals, returns, branches and var blocks",
 	Run:  runBreathe,
 }
 
@@ -27,6 +27,8 @@ func runBreathe(pass *analysis.Pass) (any, error) {
 				checkSpacing(pass, node.Body)
 			case *ast.CommClause:
 				checkSpacing(pass, node.Body)
+			case *ast.FuncLit:
+				checkFunctionLiteralBody(pass, node)
 			}
 
 			return true
@@ -50,6 +52,18 @@ func checkSpacing(pass *analysis.Pass, statements []ast.Stmt) {
 
 		// A comment line between the statements counts as separation.
 		if nextStart > previousEnd+1 {
+			continue
+		}
+
+		if containsFunctionLiteral(previous) {
+			pass.Reportf(next.Pos(), "missing blank line after function literal")
+
+			continue
+		}
+
+		if containsFunctionLiteral(next) {
+			pass.Reportf(next.Pos(), "missing blank line before function literal")
+
 			continue
 		}
 
@@ -88,6 +102,21 @@ func checkSpacing(pass *analysis.Pass, statements []ast.Stmt) {
 		if isControlFlow(next) {
 			checkControlFlowIntroduction(pass, statements, index)
 		}
+	}
+}
+
+func checkFunctionLiteralBody(pass *analysis.Pass, function *ast.FuncLit) {
+	if len(function.Body.List) == 0 {
+		return
+	}
+
+	openingLine := pass.Fset.Position(function.Body.Lbrace).Line
+	closingLine := pass.Fset.Position(function.Body.Rbrace).Line
+	firstLine := pass.Fset.Position(function.Body.List[0].Pos()).Line
+	lastLine := pass.Fset.Position(function.Body.List[len(function.Body.List)-1].End()).Line
+
+	if openingLine == firstLine || lastLine == closingLine {
+		pass.Reportf(function.Pos(), "function literal body must start and end on separate lines")
 	}
 }
 
@@ -277,6 +306,22 @@ func collectIdents(names map[string]bool, node ast.Node) {
 
 		return true
 	})
+}
+
+func containsFunctionLiteral(node ast.Node) bool {
+	found := false
+
+	ast.Inspect(node, func(current ast.Node) bool {
+		if found {
+			return false
+		}
+
+		_, found = current.(*ast.FuncLit)
+
+		return !found
+	})
+
+	return found
 }
 
 func isControlFlow(statement ast.Stmt) bool {

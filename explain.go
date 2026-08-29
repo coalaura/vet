@@ -120,7 +120,7 @@ var houseRulesExplainPage = explainPage{
 
 var breatheExplainPage = explainPage{
 	name:        "Breathe",
-	description: "Blank lines separate setup, control flow, returns, branches and grouped declarations.",
+	description: "Blank lines separate setup, control flow, function literals, returns, branches and grouped declarations.",
 	sections: []explainSection{
 		{
 			title:       "Before Control Flow",
@@ -228,6 +228,25 @@ var breatheExplainPage = explainPage{
 				")",
 				"",
 				"use(value)",
+			),
+		},
+		{
+			title:       "Around Function Literals",
+			description: "Non-empty function literal bodies and the statements containing them need room to breathe. Empty bodies may remain on one line.",
+			bad: code(
+				"ready := check(func(Item) bool { return true })",
+				"if ready {",
+				"\twork()",
+				"}",
+			),
+			good: code(
+				"ready := check(func(Item) bool {",
+				"\treturn true",
+				"})",
+				"",
+				"if ready {",
+				"\twork()",
+				"}",
 			),
 		},
 	},

@@ -187,8 +187,44 @@ func allowedTrailingVarBlock() {
 	)
 }
 
+func inlineFunctionLiteralViolation() {
+	_ = execute(func() bool { return true }) // want `function literal body must start and end on separate lines`
+}
+
+func allowedEmptyFunction() {}
+
+func allowedEmptyFunctionLiteral() {
+	_ = func() {}
+}
+
+func functionLiteralBoundaryViolations() {
+	work()
+	result := execute(func() bool { // want `missing blank line before function literal`
+		return true
+	})
+	if result { // want `missing blank line after function literal`
+		work()
+	}
+}
+
+func allowedFunctionLiteral() {
+	work()
+
+	result := execute(func() bool {
+		return true
+	})
+
+	if result {
+		work()
+	}
+}
+
 func work() error {
 	return nil
+}
+
+func execute(function func() bool) bool {
+	return function()
 }
 
 func something() int {
