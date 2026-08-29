@@ -3,6 +3,7 @@ package houserules
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 
 	"golang.org/x/tools/go/analysis"
 )
@@ -256,11 +257,8 @@ func introduces(previous, next ast.Stmt) bool {
 		return false
 	}
 
-	header := headerIdents(next)
-
 	for _, target := range assignment.Lhs {
-		identifier, ok := target.(*ast.Ident)
-		if ok && header[identifier.Name] {
+		if headerUsesExpression(next, target) {
 			return true
 		}
 	}
@@ -290,30 +288,6 @@ func introducesReturn(previous ast.Stmt, returnStatement *ast.ReturnStmt) bool {
 	return false
 }
 
-func headerIdents(statement ast.Stmt) map[string]bool {
-	names := make(map[string]bool)
-
-	switch header := unlabel(statement).(type) {
-	case *ast.IfStmt:
-		collectIdents(names, header.Init)
-		collectIdents(names, header.Cond)
-	case *ast.ForStmt:
-		collectIdents(names, header.Init)
-		collectIdents(names, header.Cond)
-		collectIdents(names, header.Post)
-	case *ast.RangeStmt:
-		collectIdents(names, header.X)
-	case *ast.SwitchStmt:
-		collectIdents(names, header.Init)
-		collectIdents(names, header.Tag)
-	case *ast.TypeSwitchStmt:
-		collectIdents(names, header.Init)
-		collectIdents(names, header.Assign)
-	}
-
-	return names
-}
-
 func collectIdents(names map[string]bool, node ast.Node) {
 	if node == nil {
 		return
@@ -327,6 +301,85 @@ func collectIdents(names map[string]bool, node ast.Node) {
 
 		return true
 	})
+}
+
+func headerUsesExpression(statement ast.Stmt, target ast.Expr) bool {
+	header, ok := unlabel(statement).(*ast.IfStmt)
+	if !ok {
+		return false
+	}
+
+	targetText := types.ExprString(unparen(target))
+	if targetText == "_" {
+		return false
+	}
+
+	if nodeUsesExpression(header.Init, targetText) || nodeUsesExpression(header.Cond, targetText) {
+		return true
+	}
+
+	selector, ok := unparen(target).(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+
+	receiver := types.ExprString(unparen(selector.X))
+
+	return nodeUsesSelectorReceiver(header.Init, receiver) || nodeUsesSelectorReceiver(header.Cond, receiver)
+}
+
+func nodeUsesExpression(node ast.Node, target string) bool {
+	if node == nil {
+		return false
+	}
+
+	found := false
+
+	ast.Inspect(node, func(current ast.Node) bool {
+		if found {
+			return false
+		}
+
+		if _, isFunction := current.(*ast.FuncLit); isFunction {
+			return false
+		}
+
+		expression, ok := current.(ast.Expr)
+		if ok && types.ExprString(unparen(expression)) == target {
+			found = true
+		}
+
+		return !found
+	})
+
+	return found
+}
+
+func nodeUsesSelectorReceiver(node ast.Node, receiver string) bool {
+	if node == nil {
+		return false
+	}
+
+	found := false
+
+	ast.Inspect(node, func(current ast.Node) bool {
+		if found {
+			return false
+		}
+
+		if _, isFunction := current.(*ast.FuncLit); isFunction {
+			return false
+		}
+
+		selector, ok := current.(*ast.SelectorExpr)
+		if ok && types.ExprString(unparen(selector.X)) == receiver {
+			found = true
+		}
+
+		return !found
+	})
+
+	return found
 }
 
 func containsFunctionLiteral(statement ast.Stmt) bool {

@@ -1,5 +1,11 @@
 package breathe
 
+type request struct {
+	Package   string
+	Project   string
+	RunTarget string
+}
+
 func violations(ready bool, count int) {
 	if ready {
 		count++
@@ -84,6 +90,22 @@ func allowedIntroductions() error {
 	}
 
 	return nil
+}
+
+func allowedSelectorIntroduction(req *request) error {
+	_, req.Package, _ = parts()
+	if req.Package == "" {
+		return work()
+	}
+
+	return nil
+}
+
+func allowedRelatedSelectorIntroduction(req *request) {
+	req.Project, req.RunTarget = resolveProjectTarget()
+	if req.Package != "" {
+		req.RunTarget = req.Package
+	}
 }
 
 func allowedForFeeders() {
@@ -266,4 +288,12 @@ func something() int {
 
 func thing() (int, error) {
 	return 0, nil
+}
+
+func parts() (string, string, bool) {
+	return "", "", false
+}
+
+func resolveProjectTarget() (string, string) {
+	return "", ""
 }
