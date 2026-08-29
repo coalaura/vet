@@ -221,6 +221,15 @@ func main() {
 }
 
 func run(opts lintOptions) (int, error) {
+	handled, err := writeAnalyzerHelp(os.Stdout, opts.Explain)
+	if err != nil {
+		return 2, fmt.Errorf("write analyzer help: %w", err)
+	}
+
+	if handled {
+		return 0, nil
+	}
+
 	tags, err := setBuildTarget(opts.GOOS, opts.GOARCH, opts.CGO, opts.Tags)
 	if err != nil {
 		return 2, err

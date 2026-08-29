@@ -53,7 +53,7 @@ func checkSpacing(pass *analysis.Pass, statements []ast.Stmt) {
 			continue
 		}
 
-		if isControlFlow(previous) && previousEnd > pass.Fset.Position(previous.Pos()).Line {
+		if isControlFlow(previous) && (!isIf(previous) || previousEnd > pass.Fset.Position(previous.Pos()).Line) {
 			pass.Reportf(next.Pos(), "missing blank line after control-flow block")
 
 			continue
@@ -197,6 +197,10 @@ func introductionGroupStart(pass *analysis.Pass, statements []ast.Stmt, index in
 // introduces reports whether previous is an assignment whose results
 // appear in the header of the control-flow statement next.
 func introduces(previous, next ast.Stmt) bool {
+	if !isIf(next) {
+		return false
+	}
+
 	assignment, ok := unlabel(previous).(*ast.AssignStmt)
 	if !ok {
 		return false
@@ -282,6 +286,12 @@ func isControlFlow(statement ast.Stmt) bool {
 	}
 
 	return false
+}
+
+func isIf(statement ast.Stmt) bool {
+	_, ok := unlabel(statement).(*ast.IfStmt)
+
+	return ok
 }
 
 func isGroupedVarBlock(statement ast.Stmt) bool {

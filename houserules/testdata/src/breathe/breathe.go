@@ -86,6 +86,41 @@ func allowedIntroductions() error {
 	return nil
 }
 
+func allowedForFeeders() {
+	current := something()
+	ceiling := current + 1
+	nextFloor := ceiling + 10
+
+	for value := ceiling + 1; value <= nextFloor; value++ {
+		work()
+	}
+}
+
+func nonIfFeedersRequireBoundaries(items []int) {
+	values := items
+	for range values { // want `missing blank line before control-flow block`
+		work()
+	}
+
+	value := something()
+	switch value { // want `missing blank line before control-flow block`
+	default:
+		work()
+	}
+
+	work()
+	select { // want `missing blank line before control-flow block`
+	default:
+	}
+}
+
+func oneLineForRequiresTrailingBoundary() {
+	for {
+		break
+	}
+	work() // want `missing blank line after control-flow block`
+}
+
 func breakViolations() {
 	for {
 		work()
