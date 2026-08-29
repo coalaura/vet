@@ -33,6 +33,59 @@ func allowed(items []int) error {
 	return nil
 }
 
+func unrelatedStatementBeforeIntroduction() error {
+	stuff := something()
+	example, err := thing() // want `missing blank line before statement feeding control-flow block`
+	if err != nil {
+		return err
+	}
+
+	_ = stuff
+	_ = example
+
+	return nil
+}
+
+func multipleIntroductions() {
+	exampleA := something()
+	exampleB := something()
+	if exampleA > 0 && exampleB != exampleA { // want `missing blank line before control-flow block: multiple statements feed its condition`
+		work()
+	}
+}
+
+func invadedMultipleIntroductions() {
+	work()
+	exampleA := something() // want `missing blank line before statements feeding control-flow block`
+	exampleB := something()
+	exampleC := something()
+
+	if exampleA > 0 && exampleB != exampleA && exampleC != exampleB {
+		work()
+	}
+}
+
+func allowedIntroductions() error {
+	stuff := something()
+
+	example, err := thing()
+	if err != nil {
+		return err
+	}
+
+	_ = stuff
+	_ = example
+
+	exampleA := something()
+	exampleB := something()
+
+	if exampleA > 0 && exampleB != exampleA {
+		work()
+	}
+
+	return nil
+}
+
 func breakViolations() {
 	for {
 		work()
@@ -101,4 +154,12 @@ func allowedTrailingVarBlock() {
 
 func work() error {
 	return nil
+}
+
+func something() int {
+	return 0
+}
+
+func thing() (int, error) {
+	return 0, nil
 }

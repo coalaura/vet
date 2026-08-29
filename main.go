@@ -590,6 +590,7 @@ func renderDiagnostics(cwd string, out []byte) (int, error) {
 
 func isGeneratedFile(path string) bool {
 	fileSet := token.NewFileSet()
+
 	file, err := parser.ParseFile(fileSet, path, nil, parser.PackageClauseOnly|parser.ParseComments)
 	if err != nil {
 		return false

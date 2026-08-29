@@ -44,6 +44,10 @@ func checkSpacing(pass *analysis.Pass, statements []ast.Stmt) {
 		previousEnd := pass.Fset.Position(previous.End()).Line
 		nextStart := pass.Fset.Position(next.Pos()).Line
 
+		if isControlFlow(next) {
+			checkMultipleIntroductionBoundary(pass, statements, index)
+		}
+
 		// A comment line between the statements counts as separation.
 		if nextStart > previousEnd+1 {
 			continue
@@ -81,10 +85,113 @@ func checkSpacing(pass *analysis.Pass, statements []ast.Stmt) {
 			continue
 		}
 
-		if isControlFlow(next) && !introduces(previous, next) {
-			pass.Reportf(next.Pos(), "missing blank line before control-flow block: only a statement feeding its condition may sit directly above")
+		if isControlFlow(next) {
+			checkControlFlowIntroduction(pass, statements, index)
 		}
 	}
+}
+
+func checkControlFlowIntroduction(pass *analysis.Pass, statements []ast.Stmt, index int) {
+	previous := statements[index-1]
+	next := statements[index]
+
+	if !introduces(previous, next) {
+		pass.Reportf(next.Pos(), "missing blank line before control-flow block: only a statement feeding its condition may sit directly above")
+
+		return
+	}
+
+	introductionStart := introductionGroupStart(pass, statements, index)
+	if index-introductionStart > 1 {
+		pass.Reportf(next.Pos(), "missing blank line before control-flow block: multiple statements feed its condition")
+
+		return
+	}
+
+	if index < 2 {
+		return
+	}
+
+	beforePrevious := statements[index-2]
+
+	beforePreviousEnd := pass.Fset.Position(beforePrevious.End()).Line
+	previousStart := pass.Fset.Position(previous.Pos()).Line
+
+	if previousStart > beforePreviousEnd+1 {
+		return
+	}
+
+	if introduces(beforePrevious, next) {
+		pass.Reportf(next.Pos(), "missing blank line before control-flow block: multiple statements feed its condition")
+
+		return
+	}
+
+	if isGroupedVarBlock(beforePrevious) {
+		return
+	}
+
+	beforePreviousStart := pass.Fset.Position(beforePrevious.Pos()).Line
+	if isControlFlow(beforePrevious) && beforePreviousEnd > beforePreviousStart {
+		return
+	}
+
+	pass.Reportf(previous.Pos(), "missing blank line before statement feeding control-flow block")
+}
+
+func checkMultipleIntroductionBoundary(pass *analysis.Pass, statements []ast.Stmt, index int) {
+	introductionStart := introductionGroupStart(pass, statements, index)
+	if index-introductionStart < 2 || introductionStart == 0 {
+		return
+	}
+
+	beforeIntroduction := statements[introductionStart-1]
+	firstIntroduction := statements[introductionStart]
+
+	beforeIntroductionEnd := pass.Fset.Position(beforeIntroduction.End()).Line
+	firstIntroductionStart := pass.Fset.Position(firstIntroduction.Pos()).Line
+
+	if firstIntroductionStart > beforeIntroductionEnd+1 {
+		return
+	}
+
+	if isGroupedVarBlock(beforeIntroduction) {
+		return
+	}
+
+	beforeIntroductionStart := pass.Fset.Position(beforeIntroduction.Pos()).Line
+	if isControlFlow(beforeIntroduction) && beforeIntroductionEnd > beforeIntroductionStart {
+		return
+	}
+
+	pass.Reportf(firstIntroduction.Pos(), "missing blank line before statements feeding control-flow block")
+}
+
+func introductionGroupStart(pass *analysis.Pass, statements []ast.Stmt, index int) int {
+	next := statements[index]
+	start := index - 1
+
+	if !introduces(statements[start], next) {
+		return index
+	}
+
+	for start > 0 {
+		candidate := statements[start-1]
+		if !introduces(candidate, next) {
+			break
+		}
+
+		candidateEnd := pass.Fset.Position(candidate.End()).Line
+		currentStart := pass.Fset.Position(statements[start].Pos()).Line
+
+		if currentStart > candidateEnd+1 {
+			break
+		}
+
+		start--
+	}
+
+	return start
 }
 
 // introduces reports whether previous is an assignment whose results
