@@ -124,16 +124,33 @@ var breatheExplainPage = explainPage{
 	sections: []explainSection{
 		{
 			title:       "Before Control Flow",
-			description: "Always separate for, switch and select blocks from preceding work. Only an if may sit directly below one assignment feeding its condition.",
+			description: "Always separate for, switch and select blocks from preceding work. This does not apply to if.",
 			bad: code(
-				"total := 0",
+				"amount := total",
+				"for i := range amount {",
+				"\tcount += i",
+				"}",
+			),
+			good: code(
+				"amount := total",
+				"",
+				"for i := range amount {",
+				"\tcount += i",
+				"}",
+			),
+		},
+		{
+			title:       "Single If Feeder",
+			description: "An if may sit directly below one assignment feeding its condition, keeping it connected.",
+			bad: code(
+				"ready := isReady()",
+				"",
 				"if ready {",
 				"\ttotal++",
 				"}",
 			),
 			good: code(
-				"total := 0",
-				"",
+				"ready := isReady()",
 				"if ready {",
 				"\ttotal++",
 				"}",
