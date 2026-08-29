@@ -41,7 +41,7 @@ func violations(lookup map[string]int) {
 	_ = wantOffhand
 }
 
-func allowed(lookup map[string]int, value any) {
+func allowed(lookup map[string]int, value any, values []int, firstIndex, secondIndex int) {
 	if count, ok := lookup["key"]; ok {
 		_ = count
 	}
@@ -52,6 +52,7 @@ func allowed(lookup map[string]int, value any) {
 
 	set := map[string]struct{}{"first": {}}
 	first, second := pair()
+	values[firstIndex], values[secondIndex] = values[secondIndex], values[firstIndex]
 
 	var (
 		third  int

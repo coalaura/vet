@@ -3,6 +3,7 @@ package houserules
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 
 	"golang.org/x/tools/go/analysis"
 )
@@ -55,7 +56,7 @@ func run(pass *analysis.Pass) (any, error) {
 					pass.Reportf(node.X.Pos(), "composite literal in range position: assign it to a named variable first")
 				}
 			case *ast.AssignStmt:
-				if len(node.Lhs) > 1 && len(node.Rhs) > 1 {
+				if len(node.Lhs) > 1 && len(node.Rhs) > 1 && !isSwapAssignment(node) {
 					pass.Reportf(node.Pos(), "chained assignment: use one assignment per target")
 				}
 			case *ast.DeclStmt:
@@ -140,6 +141,19 @@ func unparen(expression ast.Expr) ast.Expr {
 
 		expression = parentheses.X
 	}
+}
+
+func isSwapAssignment(assignment *ast.AssignStmt) bool {
+	if assignment.Tok != token.ASSIGN || len(assignment.Lhs) != 2 || len(assignment.Rhs) != 2 {
+		return false
+	}
+
+	leftFirst := types.ExprString(unparen(assignment.Lhs[0]))
+	leftSecond := types.ExprString(unparen(assignment.Lhs[1]))
+	rightFirst := types.ExprString(unparen(assignment.Rhs[0]))
+	rightSecond := types.ExprString(unparen(assignment.Rhs[1]))
+
+	return leftFirst != leftSecond && leftFirst == rightSecond && leftSecond == rightFirst
 }
 
 // isCommaOK reports whether init is a two-value map lookup or type assertion.

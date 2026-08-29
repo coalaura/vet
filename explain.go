@@ -56,7 +56,7 @@ var houseRulesExplainPage = explainPage{
 		},
 		{
 			title:       "One Assignment Per Target",
-			description: "When assigning separate values, give each target its own statement. Multiple results returned by one call may still be assigned together.",
+			description: "When assigning separate values, give each target its own statement. Multiple results returned by one call and two-target swaps may still be assigned together.",
 			bad:         "first, second := int32(3), int32(4)",
 			good: code(
 				"first := int32(3)",
