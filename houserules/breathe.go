@@ -29,6 +29,10 @@ func runBreathe(pass *analysis.Pass) (any, error) {
 				checkSpacing(pass, node.Body)
 			case *ast.FuncLit:
 				checkFunctionLiteralBody(pass, node)
+			case *ast.IfStmt:
+				checkConditionFunctionLiterals(pass, node.Cond)
+			case *ast.ForStmt:
+				checkConditionFunctionLiterals(pass, node.Cond)
 			}
 
 			return true
@@ -118,6 +122,23 @@ func checkFunctionLiteralBody(pass *analysis.Pass, function *ast.FuncLit) {
 	if openingLine == firstLine || lastLine == closingLine {
 		pass.Reportf(function.Pos(), "function literal body must start and end on separate lines")
 	}
+}
+
+func checkConditionFunctionLiterals(pass *analysis.Pass, condition ast.Expr) {
+	if condition == nil {
+		return
+	}
+
+	ast.Inspect(condition, func(current ast.Node) bool {
+		function, ok := current.(*ast.FuncLit)
+		if !ok {
+			return true
+		}
+
+		pass.Reportf(function.Pos(), "function literal in condition must be assigned before use")
+
+		return false
+	})
 }
 
 func checkControlFlowIntroduction(pass *analysis.Pass, statements []ast.Stmt, index int) {
@@ -308,12 +329,25 @@ func collectIdents(names map[string]bool, node ast.Node) {
 	})
 }
 
-func containsFunctionLiteral(node ast.Node) bool {
-	found := false
+func containsFunctionLiteral(statement ast.Stmt) bool {
+	statement = unlabel(statement)
+	if isControlFlow(statement) {
+		return false
+	}
 
-	ast.Inspect(node, func(current ast.Node) bool {
+	found := false
+	root := ast.Node(statement)
+
+	ast.Inspect(root, func(current ast.Node) bool {
 		if found {
 			return false
+		}
+
+		if current != root {
+			_, isNestedStatement := current.(ast.Stmt)
+			if isNestedStatement {
+				return false
+			}
 		}
 
 		_, found = current.(*ast.FuncLit)

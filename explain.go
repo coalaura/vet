@@ -249,6 +249,26 @@ var breatheExplainPage = explainPage{
 				"}",
 			),
 		},
+		{
+			title:       "Outside Conditions",
+			description: "Assign a function literal before using it in an if or for condition.",
+			bad: code(
+				"if check(func(Item) bool {",
+				"\treturn true",
+				"}) {",
+				"\twork()",
+				"}",
+			),
+			good: code(
+				"accept := func(Item) bool {",
+				"\treturn true",
+				"}",
+				"",
+				"if check(accept) {",
+				"\twork()",
+				"}",
+			),
+		},
 	},
 }
 

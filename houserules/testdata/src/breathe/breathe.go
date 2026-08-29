@@ -219,6 +219,39 @@ func allowedFunctionLiteral() {
 	}
 }
 
+func nestedFunctionLiteralDoesNotAffectOuterStatements(err error) {
+	if err != nil {
+		_ = execute(func() bool {
+			return true
+		})
+
+		return
+	}
+}
+
+func nestedFunctionLiteralDoesNotAffectSwitchCases(value string) {
+	switch value {
+	case "first":
+		if value != "" {
+			_ = execute(func() bool {
+				return true
+			})
+		}
+	case "second":
+		if value != "" {
+			work()
+		}
+	}
+}
+
+func functionLiteralConditionViolation() {
+	if execute(func() bool { // want `function literal in condition must be assigned before use`
+		return true
+	}) {
+		work()
+	}
+}
+
 func work() error {
 	return nil
 }
