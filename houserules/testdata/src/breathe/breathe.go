@@ -42,7 +42,22 @@ func breakViolations() {
 
 func sameLineBreakViolation() {
 	for {
-		work(); break // want `missing blank line before break`
+		work()
+		break // want `missing blank line before break`
+	}
+}
+
+func continueViolations() {
+	for {
+		work()
+		continue // want `missing blank line before continue`
+	}
+}
+
+func sameLineContinueViolation() {
+	for {
+		work()
+		continue // want `missing blank line before continue`
 	}
 }
 
@@ -66,6 +81,10 @@ func allowedBoundaries() error {
 
 	for {
 		break
+	}
+
+	for {
+		continue
 	}
 
 	err := work()

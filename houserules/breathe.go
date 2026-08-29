@@ -9,7 +9,7 @@ import (
 
 var Breathe = &analysis.Analyzer{
 	Name: "breathe",
-	Doc:  "reports missing blank lines around control flow, returns, breaks and var blocks",
+	Doc:  "reports missing blank lines around control flow, returns, branches and var blocks",
 	Run:  runBreathe,
 }
 
@@ -67,8 +67,9 @@ func checkSpacing(pass *analysis.Pass, statements []ast.Stmt) {
 			continue
 		}
 
-		if isBreak(next) {
-			pass.Reportf(next.Pos(), "missing blank line before break")
+		branchToken, isSeparatedBranch := separatedBranchToken(next)
+		if isSeparatedBranch {
+			pass.Reportf(next.Pos(), "missing blank line before %s", branchToken)
 
 			continue
 		}
@@ -182,10 +183,13 @@ func isGroupedVarBlock(statement ast.Stmt) bool {
 	return ok && declaration.Tok == token.VAR && declaration.Lparen.IsValid()
 }
 
-func isBreak(statement ast.Stmt) bool {
+func separatedBranchToken(statement ast.Stmt) (token.Token, bool) {
 	branch, ok := unlabel(statement).(*ast.BranchStmt)
+	if !ok {
+		return token.ILLEGAL, false
+	}
 
-	return ok && branch.Tok == token.BREAK
+	return branch.Tok, branch.Tok == token.BREAK || branch.Tok == token.CONTINUE
 }
 
 func unlabel(statement ast.Stmt) ast.Stmt {
