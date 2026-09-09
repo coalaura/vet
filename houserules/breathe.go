@@ -10,7 +10,7 @@ import (
 
 var Breathe = &analysis.Analyzer{
 	Name: "breathe",
-	Doc:  "reports missing blank lines around control flow, function literals, returns, branches and var blocks",
+	Doc:  "reports missing blank lines around control flow, function literals, returns, branches, var declarations and mutex operations",
 	Run:  runBreathe,
 }
 
@@ -60,6 +60,12 @@ func checkSpacing(pass *analysis.Pass, statements []ast.Stmt) {
 			continue
 		}
 
+		// Groupable declarations belong together, including var initializers
+		// containing function literals; houserules reports the group.
+		if canGroupVarStatements(pass, previous, next) {
+			continue
+		}
+
 		if containsFunctionLiteral(previous) {
 			pass.Reportf(next.Pos(), "missing blank line after function literal")
 
@@ -78,14 +84,21 @@ func checkSpacing(pass *analysis.Pass, statements []ast.Stmt) {
 			continue
 		}
 
-		if isGroupedVarBlock(previous) {
-			pass.Reportf(next.Pos(), "missing blank line after var block")
+		if isVarDeclaration(previous) {
+			pass.Reportf(next.Pos(), "missing blank line after var declaration")
 
 			continue
 		}
 
-		if isGroupedVarBlock(next) {
-			pass.Reportf(next.Pos(), "missing blank line before var block")
+		if isVarDeclaration(next) {
+			pass.Reportf(next.Pos(), "missing blank line before var declaration")
+
+			continue
+		}
+
+		mutexBoundary := mutexSpacingBoundary(pass, statements, index)
+		if mutexBoundary != "" {
+			pass.Reportf(next.Pos(), "missing blank line %s", mutexBoundary)
 
 			continue
 		}
@@ -178,7 +191,12 @@ func checkControlFlowIntroduction(pass *analysis.Pass, statements []ast.Stmt, in
 		return
 	}
 
-	if isGroupedVarBlock(beforePrevious) {
+	if isVarDeclaration(beforePrevious) || mutexOperation(pass, beforePrevious) != mutexNone {
+		return
+	}
+
+	// Do not ask the user to split declarations that houserules groups.
+	if canGroupVarStatements(pass, beforePrevious, previous) {
 		return
 	}
 
@@ -206,7 +224,11 @@ func checkMultipleIntroductionBoundary(pass *analysis.Pass, statements []ast.Stm
 		return
 	}
 
-	if isGroupedVarBlock(beforeIntroduction) {
+	if isVarDeclaration(beforeIntroduction) || mutexOperation(pass, beforeIntroduction) != mutexNone {
+		return
+	}
+
+	if canGroupVarStatements(pass, beforeIntroduction, firstIntroduction) {
 		return
 	}
 
@@ -424,12 +446,6 @@ func isIf(statement ast.Stmt) bool {
 	_, ok := unlabel(statement).(*ast.IfStmt)
 
 	return ok
-}
-
-func isGroupedVarBlock(statement ast.Stmt) bool {
-	declaration, ok := varDeclaration(statement)
-
-	return ok && declaration.Tok == token.VAR && declaration.Lparen.IsValid()
 }
 
 func separatedBranchToken(statement ast.Stmt) (token.Token, bool) {

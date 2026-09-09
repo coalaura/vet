@@ -178,10 +178,10 @@ func returnViolations() error {
 
 func varBlockViolations() {
 	value := 1
-	var ( // want `missing blank line before var block`
+	var ( // want `missing blank line before var declaration`
 		_ int
 	)
-	_ = value // want `missing blank line after var block`
+	_ = value // want `missing blank line after var declaration`
 }
 
 func allowedBoundaries() error {

@@ -32,6 +32,10 @@ func run(pass *analysis.Pass) (any, error) {
 				checkStatementVarDeclarations(pass, node.Body)
 			case *ast.CommClause:
 				checkStatementVarDeclarations(pass, node.Body)
+			case *ast.BranchStmt:
+				if node.Tok == token.GOTO {
+					pass.Reportf(node.Pos(), "goto is not allowed: use structured control flow")
+				}
 			case *ast.TypeSpec:
 				structType, ok := node.Type.(*ast.StructType)
 				if ok {
@@ -99,12 +103,20 @@ func checkFileVarDeclarations(pass *analysis.Pass, declarations []ast.Decl) {
 
 func checkStatementVarDeclarations(pass *analysis.Pass, statements []ast.Stmt) {
 	for index := 1; index < len(statements); index++ {
-		previous, previousOK := varDeclaration(statements[index-1])
-		current, currentOK := varDeclaration(statements[index])
+		previous := statements[index-1]
+		current := statements[index]
 
-		if previousOK && currentOK && previous.Tok == token.VAR && current.Tok == token.VAR && pass.Fset.Position(current.Pos()).Line == pass.Fset.Position(previous.End()).Line+1 {
-			pass.Reportf(current.Pos(), "consecutive var declarations: combine them into a var block")
+		if !canGroupVarStatements(pass, previous, current) || pass.Fset.Position(current.Pos()).Line > pass.Fset.Position(previous.End()).Line+1 {
+			continue
 		}
+
+		if isVarDeclaration(previous) || isVarDeclaration(current) {
+			pass.Reportf(current.Pos(), "consecutive var declarations: combine them into a var block, preserving explicit types and initializers")
+
+			continue
+		}
+
+		pass.Reportf(current.Pos(), "consecutive zero-value declarations: combine them into a var block")
 	}
 }
 
