@@ -3,7 +3,6 @@ package houserules
 import (
 	"go/ast"
 	"go/token"
-	"go/types"
 
 	"golang.org/x/tools/go/analysis"
 )
@@ -45,82 +44,80 @@ func runBreathe(pass *analysis.Pass) (any, error) {
 
 func checkSpacing(pass *analysis.Pass, statements []ast.Stmt) {
 	for index := 1; index < len(statements); index++ {
-		previous := statements[index-1]
-		next := statements[index]
-
-		previousEnd := pass.Fset.Position(previous.End()).Line
-		nextStart := pass.Fset.Position(next.Pos()).Line
-
-		if isControlFlow(next) {
-			checkMultipleIntroductionBoundary(pass, statements, index)
+		reason := statementSpacingReason(pass, statements, index)
+		if reason != "" {
+			pass.Reportf(statements[index].Pos(), "missing blank line %s", reason)
 		}
 
-		// A comment line between the statements counts as separation.
-		if nextStart > previousEnd+1 {
-			continue
+		checkIntroductionBoundary(pass, statements, index)
+	}
+}
+
+// statementSpacingReason selects one diagnostic for the boundary. Feeder
+// lookbacks consult the same decision so they cannot report it a second time.
+func statementSpacingReason(pass *analysis.Pass, statements []ast.Stmt, index int) string {
+	previous := statements[index-1]
+	next := statements[index]
+
+	previousEnd := pass.Fset.Position(previous.End()).Line
+	nextStart := pass.Fset.Position(next.Pos()).Line
+
+	// A comment line between the statements counts as separation.
+	if nextStart > previousEnd+1 || canGroupVarStatements(pass, previous, next) {
+		return ""
+	}
+
+	if containsFunctionLiteral(previous) {
+		return "after function literal"
+	}
+
+	if containsFunctionLiteral(next) {
+		return "before function literal"
+	}
+
+	if isControlFlow(previous) && (!isIf(previous) || previousEnd > pass.Fset.Position(previous.Pos()).Line) {
+		return "after control-flow block"
+	}
+
+	if isVarDeclaration(previous) {
+		return "after var declaration"
+	}
+
+	if isVarDeclaration(next) {
+		return "before var declaration"
+	}
+
+	mutexBoundary := mutexSpacingBoundary(pass, statements, index)
+	if mutexBoundary != "" {
+		return mutexBoundary
+	}
+
+	branchToken, _ := separatedBranchToken(next)
+
+	switch branchToken {
+	case token.BREAK:
+		return "before break"
+	case token.CONTINUE:
+		return "before continue"
+	}
+
+	returnStatement, isReturn := unlabel(next).(*ast.ReturnStmt)
+	if isReturn && !introducesReturn(pass, previous, returnStatement) {
+		return "before return: only a statement feeding its result may sit directly above"
+	}
+
+	if isControlFlow(next) {
+		if !introduces(pass, previous, next) {
+			return "before control-flow block: only a statement feeding its condition may sit directly above"
 		}
 
-		// Groupable declarations belong together, including var initializers
-		// containing function literals; houserules reports the group.
-		if canGroupVarStatements(pass, previous, next) {
-			continue
-		}
-
-		if containsFunctionLiteral(previous) {
-			pass.Reportf(next.Pos(), "missing blank line after function literal")
-
-			continue
-		}
-
-		if containsFunctionLiteral(next) {
-			pass.Reportf(next.Pos(), "missing blank line before function literal")
-
-			continue
-		}
-
-		if isControlFlow(previous) && (!isIf(previous) || previousEnd > pass.Fset.Position(previous.Pos()).Line) {
-			pass.Reportf(next.Pos(), "missing blank line after control-flow block")
-
-			continue
-		}
-
-		if isVarDeclaration(previous) {
-			pass.Reportf(next.Pos(), "missing blank line after var declaration")
-
-			continue
-		}
-
-		if isVarDeclaration(next) {
-			pass.Reportf(next.Pos(), "missing blank line before var declaration")
-
-			continue
-		}
-
-		mutexBoundary := mutexSpacingBoundary(pass, statements, index)
-		if mutexBoundary != "" {
-			pass.Reportf(next.Pos(), "missing blank line %s", mutexBoundary)
-
-			continue
-		}
-
-		branchToken, isSeparatedBranch := separatedBranchToken(next)
-		if isSeparatedBranch {
-			pass.Reportf(next.Pos(), "missing blank line before %s", branchToken)
-
-			continue
-		}
-
-		returnStatement, isReturn := unlabel(next).(*ast.ReturnStmt)
-		if isReturn && !introducesReturn(previous, returnStatement) {
-			pass.Reportf(next.Pos(), "missing blank line before return: only a statement feeding its result may sit directly above")
-
-			continue
-		}
-
-		if isControlFlow(next) {
-			checkControlFlowIntroduction(pass, statements, index)
+		introductionStart := introductionGroupStart(pass, statements, index)
+		if index-introductionStart > 1 {
+			return "before control-flow block: multiple statements feed its condition"
 		}
 	}
+
+	return ""
 }
 
 func checkFunctionLiteralBody(pass *analysis.Pass, function *ast.FuncLit) {
@@ -155,62 +152,22 @@ func checkConditionFunctionLiterals(pass *analysis.Pass, condition ast.Expr) {
 	})
 }
 
-func checkControlFlowIntroduction(pass *analysis.Pass, statements []ast.Stmt, index int) {
-	previous := statements[index-1]
-	next := statements[index]
-
-	if !introduces(previous, next) {
-		pass.Reportf(next.Pos(), "missing blank line before control-flow block: only a statement feeding its condition may sit directly above")
-
+func checkIntroductionBoundary(pass *analysis.Pass, statements []ast.Stmt, index int) {
+	if !isIf(statements[index]) {
 		return
 	}
 
 	introductionStart := introductionGroupStart(pass, statements, index)
-	if index-introductionStart > 1 {
-		pass.Reportf(next.Pos(), "missing blank line before control-flow block: multiple statements feed its condition")
-
+	if introductionStart == index || introductionStart == 0 {
 		return
 	}
 
-	if index < 2 {
-		return
-	}
+	introductionCount := index - introductionStart
+	previousEnd := pass.Fset.Position(statements[index-1].End()).Line
+	nextStart := pass.Fset.Position(statements[index].Pos()).Line
 
-	beforePrevious := statements[index-2]
-
-	beforePreviousEnd := pass.Fset.Position(beforePrevious.End()).Line
-	previousStart := pass.Fset.Position(previous.Pos()).Line
-
-	if previousStart > beforePreviousEnd+1 {
-		return
-	}
-
-	if introduces(beforePrevious, next) {
-		pass.Reportf(next.Pos(), "missing blank line before control-flow block: multiple statements feed its condition")
-
-		return
-	}
-
-	if isVarDeclaration(beforePrevious) || mutexOperation(pass, beforePrevious) != mutexNone {
-		return
-	}
-
-	// Do not ask the user to split declarations that houserules groups.
-	if canGroupVarStatements(pass, beforePrevious, previous) {
-		return
-	}
-
-	beforePreviousStart := pass.Fset.Position(beforePrevious.Pos()).Line
-	if isControlFlow(beforePrevious) && beforePreviousEnd > beforePreviousStart {
-		return
-	}
-
-	pass.Reportf(previous.Pos(), "missing blank line before statement feeding control-flow block")
-}
-
-func checkMultipleIntroductionBoundary(pass *analysis.Pass, statements []ast.Stmt, index int) {
-	introductionStart := introductionGroupStart(pass, statements, index)
-	if index-introductionStart < 2 || introductionStart == 0 {
+	// An isolated feeder separated from its if need not start a new section.
+	if introductionCount == 1 && nextStart > previousEnd+1 {
 		return
 	}
 
@@ -224,16 +181,19 @@ func checkMultipleIntroductionBoundary(pass *analysis.Pass, statements []ast.Stm
 		return
 	}
 
-	if isVarDeclaration(beforeIntroduction) || mutexOperation(pass, beforeIntroduction) != mutexNone {
+	// Ordinary boundary rules take precedence over feeder-specific spacing.
+	if statementSpacingReason(pass, statements, introductionStart) != "" {
 		return
 	}
 
-	if canGroupVarStatements(pass, beforeIntroduction, firstIntroduction) {
+	// Keep declarations groupable and a single lock attached to protected work.
+	if canGroupVarStatements(pass, beforeIntroduction, firstIntroduction) || mutexOperation(pass, beforeIntroduction) != mutexNone {
 		return
 	}
 
-	beforeIntroductionStart := pass.Fset.Position(beforeIntroduction.Pos()).Line
-	if isControlFlow(beforeIntroduction) && beforeIntroductionEnd > beforeIntroductionStart {
+	if introductionCount == 1 {
+		pass.Reportf(firstIntroduction.Pos(), "missing blank line before statement feeding control-flow block")
+
 		return
 	}
 
@@ -244,13 +204,13 @@ func introductionGroupStart(pass *analysis.Pass, statements []ast.Stmt, index in
 	next := statements[index]
 	start := index - 1
 
-	if !introduces(statements[start], next) {
+	if !introduces(pass, statements[start], next) {
 		return index
 	}
 
 	for start > 0 {
 		candidate := statements[start-1]
-		if !introduces(candidate, next) {
+		if !introduces(pass, candidate, next) {
 			break
 		}
 
@@ -269,7 +229,7 @@ func introductionGroupStart(pass *analysis.Pass, statements []ast.Stmt, index in
 
 // introduces reports whether previous is an assignment whose results
 // appear in the header of the control-flow statement next.
-func introduces(previous, next ast.Stmt) bool {
+func introduces(pass *analysis.Pass, previous, next ast.Stmt) bool {
 	if !isIf(next) {
 		return false
 	}
@@ -280,7 +240,7 @@ func introduces(previous, next ast.Stmt) bool {
 	}
 
 	for _, target := range assignment.Lhs {
-		if headerUsesExpression(next, target) {
+		if headerUsesExpression(pass, next, target) {
 			return true
 		}
 	}
@@ -288,120 +248,56 @@ func introduces(previous, next ast.Stmt) bool {
 	return false
 }
 
-func introducesReturn(previous ast.Stmt, returnStatement *ast.ReturnStmt) bool {
+func introducesReturn(pass *analysis.Pass, previous ast.Stmt, returnStatement *ast.ReturnStmt) bool {
 	assignment, ok := unlabel(previous).(*ast.AssignStmt)
 	if !ok {
 		return false
 	}
 
-	resultNames := make(map[string]bool)
-
 	for _, result := range returnStatement.Results {
-		collectIdents(resultNames, result)
-	}
-
-	for _, target := range assignment.Lhs {
-		identifier, ok := target.(*ast.Ident)
-		if ok && resultNames[identifier.Name] {
-			return true
+		for _, target := range assignment.Lhs {
+			if nodeUsesExpression(pass, result, target, false) {
+				return true
+			}
 		}
 	}
 
 	return false
 }
 
-func collectIdents(names map[string]bool, node ast.Node) {
-	if node == nil {
-		return
-	}
-
-	ast.Inspect(node, func(current ast.Node) bool {
-		identifier, ok := current.(*ast.Ident)
-		if ok {
-			names[identifier.Name] = true
-		}
-
-		return true
-	})
-}
-
-func headerUsesExpression(statement ast.Stmt, target ast.Expr) bool {
+func headerUsesExpression(pass *analysis.Pass, statement ast.Stmt, target ast.Expr) bool {
 	header, ok := unlabel(statement).(*ast.IfStmt)
 	if !ok {
 		return false
 	}
 
-	targetText := types.ExprString(unparen(target))
-	if targetText == "_" {
-		return false
-	}
+	initializer, isAssignment := header.Init.(*ast.AssignStmt)
+	if isAssignment {
+		// Initializer targets are writes, not reads of the preceding value.
+		for _, value := range initializer.Rhs {
+			if nodeUsesExpression(pass, value, target, true) {
+				return true
+			}
+		}
 
-	if nodeUsesExpression(header.Init, targetText) || nodeUsesExpression(header.Cond, targetText) {
+		for _, destination := range initializer.Lhs {
+			if assignmentTargetUsesExpression(pass, destination, target) {
+				return true
+			}
+		}
+
+		for _, destination := range initializer.Lhs {
+			// Replacing the target or any part of its address invalidates the
+			// previous result, e.g. changing the index in values[index].
+			if nodeUsesExpression(pass, target, destination, false) {
+				return false
+			}
+		}
+	} else if nodeUsesExpression(pass, header.Init, target, true) {
 		return true
 	}
 
-	selector, ok := unparen(target).(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-
-	receiver := types.ExprString(unparen(selector.X))
-
-	return nodeUsesSelectorReceiver(header.Init, receiver) || nodeUsesSelectorReceiver(header.Cond, receiver)
-}
-
-func nodeUsesExpression(node ast.Node, target string) bool {
-	if node == nil {
-		return false
-	}
-
-	found := false
-
-	ast.Inspect(node, func(current ast.Node) bool {
-		if found {
-			return false
-		}
-
-		if _, isFunction := current.(*ast.FuncLit); isFunction {
-			return false
-		}
-
-		expression, ok := current.(ast.Expr)
-		if ok && types.ExprString(unparen(expression)) == target {
-			found = true
-		}
-
-		return !found
-	})
-
-	return found
-}
-
-func nodeUsesSelectorReceiver(node ast.Node, receiver string) bool {
-	if node == nil {
-		return false
-	}
-
-	found := false
-
-	ast.Inspect(node, func(current ast.Node) bool {
-		if found {
-			return false
-		}
-
-		if _, isFunction := current.(*ast.FuncLit); isFunction {
-			return false
-		}
-
-		selector, ok := current.(*ast.SelectorExpr)
-		if ok && types.ExprString(unparen(selector.X)) == receiver {
-			found = true
-		}
-
-		return !found
-	})
-
-	return found
+	return nodeUsesExpression(pass, header.Cond, target, true)
 }
 
 func containsFunctionLiteral(statement ast.Stmt) bool {

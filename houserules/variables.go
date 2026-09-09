@@ -9,6 +9,15 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
+func checkVarSpecifications(pass *analysis.Pass, declaration *ast.GenDecl) {
+	for _, specification := range declaration.Specs {
+		value := specification.(*ast.ValueSpec)
+		if len(value.Names) > 1 && len(value.Values) != 1 {
+			pass.Reportf(value.Pos(), "multiple variables in declaration: use one variable per specification, preserving evaluation order and original values")
+		}
+	}
+}
+
 func isVarDeclaration(statement ast.Stmt) bool {
 	declaration, ok := varDeclaration(statement)
 
@@ -58,10 +67,11 @@ func isZeroInitializer(pass *analysis.Pass, name *ast.Ident, expression ast.Expr
 
 	expression = unparen(expression)
 
-	value := pass.TypesInfo.Types[expression]
-	if value.IsNil() {
+	if isNilInitializer(pass, expression) {
 		return true
 	}
+
+	value := pass.TypesInfo.Types[expression]
 
 	// The destination type matters: an interface containing 0 is not nil.
 	_, basic := variable.Type().Underlying().(*types.Basic)
@@ -90,4 +100,44 @@ func isZeroInitializer(pass *analysis.Pass, name *ast.Ident, expression ast.Expr
 	}
 
 	return false
+}
+
+func isNilInitializer(pass *analysis.Pass, expression ast.Expr) bool {
+	expression = unparen(expression)
+
+	value := pass.TypesInfo.Types[expression]
+	if value.IsNil() {
+		return true
+	}
+
+	conversion, ok := expression.(*ast.CallExpr)
+	if !ok || len(conversion.Args) != 1 || !pass.TypesInfo.Types[unparen(conversion.Fun)].IsType() {
+		return false
+	}
+
+	// A type parameter's underlying interface is a constraint, not the value's
+	// runtime representation. Leave generic conversions to explicit var specs.
+	if _, parameter := types.Unalias(value.Type).(*types.TypeParam); parameter {
+		return false
+	}
+
+	switch destination := value.Type.Underlying().(type) {
+	case *types.Pointer, *types.Slice, *types.Map, *types.Chan, *types.Signature:
+	case *types.Basic:
+		if destination.Kind() != types.UnsafePointer {
+			return false
+		}
+	case *types.Interface:
+		argument := pass.TypesInfo.Types[unparen(conversion.Args[0])]
+		_, interfaceArgument := argument.Type.Underlying().(*types.Interface)
+
+		// Boxing a typed nil pointer/slice/etc. creates a non-nil interface.
+		if !argument.IsNil() && !interfaceArgument {
+			return false
+		}
+	default:
+		return false
+	}
+
+	return isNilInitializer(pass, conversion.Args[0])
 }

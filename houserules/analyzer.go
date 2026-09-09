@@ -3,7 +3,6 @@ package houserules
 import (
 	"go/ast"
 	"go/token"
-	"go/types"
 
 	"golang.org/x/tools/go/analysis"
 )
@@ -60,8 +59,12 @@ func run(pass *analysis.Pass) (any, error) {
 					pass.Reportf(node.X.Pos(), "composite literal in range position: assign it to a named variable first")
 				}
 			case *ast.AssignStmt:
-				if len(node.Lhs) > 1 && len(node.Rhs) > 1 && !isSwapAssignment(node) {
-					pass.Reportf(node.Pos(), "chained assignment: use one assignment per target")
+				if len(node.Lhs) > 1 && len(node.Rhs) > 1 && !isSwapAssignment(pass, node) {
+					pass.Reportf(node.Pos(), "chained assignment: use one assignment per target, preserving evaluation order and original values")
+				}
+			case *ast.GenDecl:
+				if node.Tok == token.VAR {
+					checkVarSpecifications(pass, node)
 				}
 			case *ast.DeclStmt:
 				declaration, ok := node.Decl.(*ast.GenDecl)
@@ -155,17 +158,12 @@ func unparen(expression ast.Expr) ast.Expr {
 	}
 }
 
-func isSwapAssignment(assignment *ast.AssignStmt) bool {
+func isSwapAssignment(pass *analysis.Pass, assignment *ast.AssignStmt) bool {
 	if assignment.Tok != token.ASSIGN || len(assignment.Lhs) != 2 || len(assignment.Rhs) != 2 {
 		return false
 	}
 
-	leftFirst := types.ExprString(unparen(assignment.Lhs[0]))
-	leftSecond := types.ExprString(unparen(assignment.Lhs[1]))
-	rightFirst := types.ExprString(unparen(assignment.Rhs[0]))
-	rightSecond := types.ExprString(unparen(assignment.Rhs[1]))
-
-	return leftFirst != leftSecond && leftFirst == rightSecond && leftSecond == rightFirst
+	return !sameExpression(pass, assignment.Lhs[0], assignment.Lhs[1]) && sameExpression(pass, assignment.Lhs[0], assignment.Rhs[1]) && sameExpression(pass, assignment.Lhs[1], assignment.Rhs[0])
 }
 
 // isCommaOK reports whether init is a two-value map lookup or type assertion.
@@ -179,7 +177,7 @@ func isCommaOK(init ast.Stmt) bool {
 		return false
 	}
 
-	switch assignment.Rhs[0].(type) {
+	switch unparen(assignment.Rhs[0]).(type) {
 	case *ast.IndexExpr, *ast.TypeAssertExpr:
 		return true
 	}

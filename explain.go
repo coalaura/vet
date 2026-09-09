@@ -77,7 +77,7 @@ var houseRulesExplainPage = explainPage{
 		},
 		{
 			title:       "One Assignment Per Target",
-			description: "When assigning separate values, give each target its own statement. Multiple results returned by one call and two-target swaps may still be assigned together.",
+			description: "When assigning separate values, give each target its own statement. Var declarations, including specs inside var blocks, use one variable per specification. Multiple results from one expression and intentional two-target swaps with stable target expressions remain allowed. Preserve evaluation order and original values when splitting assignments; use temporaries when necessary.",
 			bad:         "first, second := int32(3), int32(4)",
 			good: code(
 				"first := int32(3)",
@@ -124,7 +124,7 @@ var houseRulesExplainPage = explainPage{
 		},
 		{
 			title:       "Group Consecutive Variables",
-			description: "Combine adjacent explicit var declarations and zero-value short declarations into one var block. Preserve explicit var types, initializers and evaluation order, even for non-zero values or runtime calls. Short declarations qualify only when every target is new and every initializer is provably zero.",
+			description: "Combine adjacent explicit var declarations and zero-value short declarations into one var block. Preserve explicit var types, initializers and evaluation order, even for non-zero values or runtime calls. Short declarations qualify only when every target is new and every initializer is provably zero, including typed nil conversions. An interface containing a typed nil pointer is not zero.",
 			bad: code(
 				"var buffer [8]byte",
 				"ready := false",
@@ -145,7 +145,7 @@ var houseRulesExplainPage = explainPage{
 
 var breatheExplainPage = explainPage{
 	name:        "Breathe",
-	description: "Blank lines separate setup, control flow, function literals, returns, branches, var declarations and mutex sections.",
+	description: "Blank lines or intervening comment lines separate setup, control flow, function literals, returns, branches, var declarations and mutex sections. Each statement boundary gets one prioritized spacing diagnostic; ordinary section boundaries take precedence over feeder-specific spacing.",
 	sections: []explainSection{
 		{
 			title:       "Before Control Flow",
@@ -166,15 +166,17 @@ var breatheExplainPage = explainPage{
 		},
 		{
 			title:       "Single If Feeder",
-			description: "An if may sit directly below one assignment feeding its condition, keeping it connected.",
+			description: "An if may sit directly below one assignment feeding its condition, keeping it connected. A blank line is also allowed. Field assignments may accompany conditions using related fields or methods of the same receiver.",
 			bad: code(
+				"work()",
 				"ready := isReady()",
-				"",
 				"if ready {",
 				"\ttotal++",
 				"}",
 			),
 			good: code(
+				"work()",
+				"",
 				"ready := isReady()",
 				"if ready {",
 				"\ttotal++",
@@ -412,11 +414,13 @@ func highlightGo(source string) string {
 
 	lexer.Init(file, []byte(source), nil, scanner.ScanComments)
 
-	var output strings.Builder
+	var (
+		output strings.Builder
 
-	declaredTypes := make(map[string]bool)
-	previousOffset := 0
-	previousToken := token.ILLEGAL
+		previousOffset int
+		declaredTypes  = make(map[string]bool)
+		previousToken  = token.ILLEGAL
+	)
 
 	for {
 		position, scannedToken, literal := lexer.Scan()
