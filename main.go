@@ -75,6 +75,7 @@ type lintOptions struct {
 	ShowIgnored bool
 	Tests       bool
 	CGO         bool
+	Fix         bool
 }
 
 var Version = "dev"
@@ -88,6 +89,7 @@ func main() {
 		cgoEnabled  bool
 		explain     string
 		fail        = "all"
+		fix         bool
 		goVersion   = "module"
 		listChecks  bool
 		showIgnored bool
@@ -132,6 +134,11 @@ func main() {
 				Usage:       "comma-separated list of checks that can cause a non-zero exit status",
 				Value:       "all",
 				Destination: &fail,
+			},
+			&cli.BoolFlag{
+				Name:        "fix",
+				Usage:       "apply safe automatic fixes before reporting remaining issues",
+				Destination: &fix,
 			},
 			&cli.StringFlag{
 				Name:        "go",
@@ -190,6 +197,7 @@ func main() {
 				Checks:      checks,
 				Explain:     explain,
 				Fail:        fail,
+				Fix:         fix,
 				GoVersion:   goVersion,
 				GOARCH:      targetArch,
 				GOOS:        targetOS,
@@ -237,13 +245,68 @@ func run(opts lintOptions) (int, error) {
 
 	opts.Tags = tags
 
-	cmd := newLintCommand()
+	fixedCount := 0
 
-	cmd.ParseFlags(forceJSONFormat(buildLintArgs(opts)))
+	if opts.Fix && !opts.ListChecks {
+		fixOutput, fixCode, fixErr := executeLint(opts, "sarif")
+		if fixErr != nil {
+			return 2, fixErr
+		}
 
-	out, code, err := captureCommandOutput(cmd.Execute)
+		if !looksLikeJSONStream(fixOutput) && (fixCode != 0 || len(bytes.TrimSpace(fixOutput)) != 0) {
+			_, err = os.Stdout.Write(fixOutput)
+			if err != nil {
+				return 2, fmt.Errorf("write analyzer output: %w", err)
+			}
+
+			return fixCode, nil
+		}
+
+		if looksLikeJSONStream(fixOutput) {
+			fixedCount, fixErr = applySuggestedFixes(fixOutput)
+			if fixErr != nil {
+				return 2, fmt.Errorf("apply suggested fixes: %w", fixErr)
+			}
+		}
+	}
+
+	out, code, err := executeLint(opts, "json")
 	if err != nil {
 		return 2, err
+	}
+
+	if opts.Fix && looksLikeJSONStream(out) {
+		diagnostics, decodeErr := decodeDiagnostics(out)
+		if decodeErr != nil {
+			return 2, fmt.Errorf("decode diagnostics for fixes: %w", decodeErr)
+		}
+
+		spacingCount, fixErr := applyAutomaticFixes(diagnostics)
+		if fixErr != nil {
+			return 2, fmt.Errorf("apply fixes: %w", fixErr)
+		}
+
+		fixedCount += spacingCount
+
+		if spacingCount > 0 {
+			out, code, err = executeLint(opts, "json")
+			if err != nil {
+				return 2, err
+			}
+		}
+	}
+
+	if fixedCount > 0 {
+		suffix := "s"
+
+		if fixedCount == 1 {
+			suffix = ""
+		}
+
+		_, err = fmt.Fprintf(os.Stdout, "\x1b[32m::\x1b[0m fixed %d issue%s\n", fixedCount, suffix)
+		if err != nil {
+			return 2, fmt.Errorf("write fix summary: %w", err)
+		}
 	}
 
 	if code == 0 && len(bytes.TrimSpace(out)) == 0 {
@@ -293,6 +356,14 @@ func run(opts lintOptions) (int, error) {
 	}
 
 	return code, nil
+}
+
+func executeLint(opts lintOptions, format string) ([]byte, int, error) {
+	cmd := newLintCommand()
+
+	cmd.ParseFlags(forceFormat(buildLintArgs(opts), format))
+
+	return captureCommandOutput(cmd.Execute)
 }
 
 func setBuildTarget(targetOS, targetArch string, cgoEnabled bool, tags string) (string, error) {
@@ -436,10 +507,10 @@ func newLintCommand() *lintcmd.Command {
 	return cmd
 }
 
-func forceJSONFormat(rawArgs []string) []string {
+func forceFormat(rawArgs []string, format string) []string {
 	args := make([]string, 0, len(rawArgs)+2)
 
-	args = append(args, "-f", "json")
+	args = append(args, "-f", format)
 
 	for i := 0; i < len(rawArgs); i++ {
 		arg := rawArgs[i]
