@@ -227,7 +227,6 @@ func main() {
 				Tests:       tests,
 				Packages:    c.Args().Slice(),
 			})
-
 			if err != nil {
 				return err
 			}
@@ -265,7 +264,32 @@ func run(opts lintOptions) (int, error) {
 
 	opts.Tags = tags
 
-	out, code, err := executeLint(opts)
+	fixedCount := 0
+
+	if opts.Fix && !opts.ListChecks {
+		fixOutput, fixCode, fixErr := executeLint(opts, "sarif")
+		if fixErr != nil {
+			return 2, fixErr
+		}
+
+		if !looksLikeJSONStream(fixOutput) && (fixCode != 0 || len(bytes.TrimSpace(fixOutput)) != 0) {
+			_, err = os.Stdout.Write(fixOutput)
+			if err != nil {
+				return 2, fmt.Errorf("write analyzer output: %w", err)
+			}
+
+			return fixCode, nil
+		}
+
+		if looksLikeJSONStream(fixOutput) {
+			fixedCount, fixErr = applySuggestedFixes(fixOutput)
+			if fixErr != nil {
+				return 2, fmt.Errorf("apply suggested fixes: %w", fixErr)
+			}
+		}
+	}
+
+	out, code, err := executeLint(opts, "json")
 	if err != nil {
 		return 2, err
 	}
@@ -276,27 +300,31 @@ func run(opts lintOptions) (int, error) {
 			return 2, fmt.Errorf("decode diagnostics for fixes: %w", decodeErr)
 		}
 
-		fixedCount, fixErr := applyAutomaticFixes(diagnostics)
+		spacingCount, fixErr := applyAutomaticFixes(diagnostics)
 		if fixErr != nil {
 			return 2, fmt.Errorf("apply fixes: %w", fixErr)
 		}
 
-		if fixedCount > 0 {
-			suffix := "s"
+		fixedCount += spacingCount
 
-			if fixedCount == 1 {
-				suffix = ""
-			}
-
-			_, err = fmt.Fprintf(os.Stdout, "\x1b[32m::\x1b[0m fixed %d spacing issue%s\n", fixedCount, suffix)
-			if err != nil {
-				return 2, fmt.Errorf("write fix summary: %w", err)
-			}
-
-			out, code, err = executeLint(opts)
+		if spacingCount > 0 {
+			out, code, err = executeLint(opts, "json")
 			if err != nil {
 				return 2, err
 			}
+		}
+	}
+
+	if fixedCount > 0 {
+		suffix := "s"
+
+		if fixedCount == 1 {
+			suffix = ""
+		}
+
+		_, err = fmt.Fprintf(os.Stdout, "\x1b[32m::\x1b[0m fixed %d issue%s\n", fixedCount, suffix)
+		if err != nil {
+			return 2, fmt.Errorf("write fix summary: %w", err)
 		}
 	}
 
@@ -349,10 +377,10 @@ func run(opts lintOptions) (int, error) {
 	return code, nil
 }
 
-func executeLint(opts lintOptions) ([]byte, int, error) {
+func executeLint(opts lintOptions, format string) ([]byte, int, error) {
 	cmd := newLintCommand()
 
-	cmd.ParseFlags(forceJSONFormat(buildLintArgs(opts)))
+	cmd.ParseFlags(forceFormat(buildLintArgs(opts), format))
 
 	return captureCommandOutput(cmd.Execute)
 }
@@ -659,10 +687,10 @@ func newLintCommand() *lintcmd.Command {
 	return cmd
 }
 
-func forceJSONFormat(rawArgs []string) []string {
+func forceFormat(rawArgs []string, format string) []string {
 	args := make([]string, 0, len(rawArgs)+2)
 
-	args = append(args, "-f", "json")
+	args = append(args, "-f", format)
 
 	for i := 0; i < len(rawArgs); i++ {
 		arg := rawArgs[i]
