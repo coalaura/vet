@@ -77,6 +77,17 @@ func checkSpacing(pass *analysis.Pass, file *ast.File, statements []ast.Stmt) {
 }
 
 func isSimpleErrorCheck(pass *analysis.Pass, previous, next ast.Stmt) bool {
+	if !isErrorCheck(pass, previous, next) {
+		return false
+	}
+
+	previousStart := pass.Fset.Position(previous.Pos()).Line
+	previousEnd := pass.Fset.Position(previous.End()).Line
+
+	return previousStart == previousEnd
+}
+
+func isErrorCheck(pass *analysis.Pass, previous, next ast.Stmt) bool {
 	assignment, ok := unlabel(previous).(*ast.AssignStmt)
 	if !ok {
 		return false
@@ -219,6 +230,10 @@ func statementSpacingReason(pass *analysis.Pass, statements []ast.Stmt, index in
 	if isControlFlow(next) {
 		if !introduces(pass, previous, next) {
 			return "before control-flow block: only a statement feeding its condition may sit directly above"
+		}
+
+		if isErrorCheck(pass, previous, next) && previousEnd > pass.Fset.Position(previous.Pos()).Line {
+			return "before error check with multiline assignment"
 		}
 
 		introductionStart := introductionGroupStart(pass, statements, index)

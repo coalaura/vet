@@ -34,6 +34,31 @@ func commentedSimpleErrorCheck() error {
 	return nil
 }
 
+func separatedMultilineErrorCheck() error {
+	_, err := multilineThing(
+		1,
+		2,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func adjacentMultilineErrorCheck() error {
+	_, err := multilineThing(
+		1,
+		2,
+	)
+	if err != nil { // want `missing blank line before error check with multiline assignment`
+		return err
+	}
+
+	return nil
+}
+
 func violations(ready bool, count int) {
 	if ready {
 		count++
@@ -315,6 +340,10 @@ func something() int {
 }
 
 func thing() (int, error) {
+	return 0, nil
+}
+
+func multilineThing(_, _ int) (int, error) {
 	return 0, nil
 }
 
