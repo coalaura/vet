@@ -15,7 +15,8 @@ type functionLock struct {
 	Unlock func()
 }
 
-func (unrelatedLock) Lock()   {}
+func (unrelatedLock) Lock() {}
+
 func (unrelatedLock) Unlock() {}
 
 func singleMutexViolations(mutex *sync.Mutex) {

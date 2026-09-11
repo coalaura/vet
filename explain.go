@@ -145,8 +145,38 @@ var houseRulesExplainPage = explainPage{
 
 var breatheExplainPage = explainPage{
 	name:        "Breathe",
-	description: "Blank lines or intervening comment lines separate setup, control flow, function literals, returns, branches, var declarations and mutex sections. Each statement boundary gets one prioritized spacing diagnostic; ordinary section boundaries take precedence over feeder-specific spacing.",
+	description: "Blank lines or intervening comment lines separate declarations, setup, control flow, function literals, returns, branches, var declarations and mutex sections. Simple error checks are kept directly attached to the assignment producing the error. Each statement boundary gets one prioritized spacing diagnostic; ordinary section boundaries take precedence over feeder-specific spacing.",
 	sections: []explainSection{
+		{
+			title:       "Between Functions And Methods",
+			description: "Separate consecutive function declarations, including methods, with a blank or comment line.",
+			bad: code(
+				"func first() {}",
+				"func second() {}",
+			),
+			good: code(
+				"func first() {}",
+				"",
+				"func second() {}",
+			),
+		},
+		{
+			title:       "Simple Error Checks",
+			description: "Keep a plain error != nil check directly below the assignment that produced the error.",
+			bad: code(
+				"value, err := process()",
+				"",
+				"if err != nil {",
+				"\treturn err",
+				"}",
+			),
+			good: code(
+				"value, err := process()",
+				"if err != nil {",
+				"\treturn err",
+				"}",
+			),
+		},
 		{
 			title:       "Before Control Flow",
 			description: "Always separate for, switch and select blocks from preceding work. This does not apply to if.",

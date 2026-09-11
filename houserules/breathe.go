@@ -3,13 +3,14 @@ package houserules
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 
 	"golang.org/x/tools/go/analysis"
 )
 
 var Breathe = &analysis.Analyzer{
 	Name: "breathe",
-	Doc:  "reports missing blank lines around control flow, function literals, returns, branches, var declarations and mutex operations",
+	Doc:  "reports spacing violations around declarations, error checks, control flow, function literals, returns, branches, var declarations and mutex operations",
 	Run:  runBreathe,
 }
 
@@ -19,14 +20,16 @@ func runBreathe(pass *analysis.Pass) (any, error) {
 			continue
 		}
 
+		checkFunctionDeclarationSpacing(pass, file)
+
 		ast.Inspect(file, func(current ast.Node) bool {
 			switch node := current.(type) {
 			case *ast.BlockStmt:
-				checkSpacing(pass, node.List)
+				checkSpacing(pass, file, node.List)
 			case *ast.CaseClause:
-				checkSpacing(pass, node.Body)
+				checkSpacing(pass, file, node.Body)
 			case *ast.CommClause:
-				checkSpacing(pass, node.Body)
+				checkSpacing(pass, file, node.Body)
 			case *ast.FuncLit:
 				checkFunctionLiteralBody(pass, node)
 			case *ast.IfStmt:
@@ -42,15 +45,122 @@ func runBreathe(pass *analysis.Pass) (any, error) {
 	return nil, nil
 }
 
-func checkSpacing(pass *analysis.Pass, statements []ast.Stmt) {
+func checkFunctionDeclarationSpacing(pass *analysis.Pass, file *ast.File) {
+	for index := 1; index < len(file.Decls); index++ {
+		previous, previousOK := file.Decls[index-1].(*ast.FuncDecl)
+		current, currentOK := file.Decls[index].(*ast.FuncDecl)
+
+		if !previousOK || !currentOK || hasSeparationLine(pass, file, previous.End(), current.Pos()) {
+			continue
+		}
+
+		pass.Reportf(current.Pos(), "missing blank line between function declarations")
+	}
+}
+
+func checkSpacing(pass *analysis.Pass, file *ast.File, statements []ast.Stmt) {
 	for index := 1; index < len(statements); index++ {
+		previous := statements[index-1]
+		current := statements[index]
+
+		if isSimpleErrorCheck(pass, previous, current) && hasBlankLine(pass, file, previous.End(), current.Pos()) {
+			pass.Reportf(current.Pos(), "blank line before simple error check")
+		}
+
 		reason := statementSpacingReason(pass, statements, index)
 		if reason != "" {
-			pass.Reportf(statements[index].Pos(), "missing blank line %s", reason)
+			pass.Reportf(current.Pos(), "missing blank line %s", reason)
 		}
 
 		checkIntroductionBoundary(pass, statements, index)
 	}
+}
+
+func isSimpleErrorCheck(pass *analysis.Pass, previous, next ast.Stmt) bool {
+	assignment, ok := unlabel(previous).(*ast.AssignStmt)
+	if !ok {
+		return false
+	}
+
+	ifStatement, ok := unlabel(next).(*ast.IfStmt)
+	if !ok || ifStatement.Init != nil {
+		return false
+	}
+
+	condition, ok := unparen(ifStatement.Cond).(*ast.BinaryExpr)
+	if !ok || condition.Op != token.NEQ {
+		return false
+	}
+
+	checked := condition.X
+	if isNilExpression(checked) {
+		checked = condition.Y
+	} else if !isNilExpression(condition.Y) {
+		return false
+	}
+
+	errorObject := types.Universe.Lookup("error")
+	if errorObject == nil || !types.AssignableTo(pass.TypesInfo.TypeOf(checked), errorObject.Type()) {
+		return false
+	}
+
+	for _, target := range assignment.Lhs {
+		if sameExpression(pass, target, checked) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isNilExpression(expression ast.Expr) bool {
+	identifier, ok := unparen(expression).(*ast.Ident)
+
+	return ok && identifier.Name == "nil"
+}
+
+func hasBlankLine(pass *analysis.Pass, file *ast.File, previousEnd, currentStart token.Pos) bool {
+	previousLine := pass.Fset.Position(previousEnd).Line
+	currentLine := pass.Fset.Position(currentStart).Line
+
+	for line := previousLine + 1; line < currentLine; line++ {
+		coveredByComment := false
+
+		for _, comment := range file.Comments {
+			commentStart := pass.Fset.Position(comment.Pos()).Line
+			commentEnd := pass.Fset.Position(comment.End()).Line
+
+			if commentStart <= line && line <= commentEnd {
+				coveredByComment = true
+
+				break
+			}
+		}
+
+		if !coveredByComment {
+			return true
+		}
+	}
+
+	return false
+}
+
+func hasSeparationLine(pass *analysis.Pass, file *ast.File, previousEnd, currentStart token.Pos) bool {
+	previousLine := pass.Fset.Position(previousEnd).Line
+	currentLine := pass.Fset.Position(currentStart).Line
+
+	if currentLine > previousLine+1 {
+		return true
+	}
+
+	for _, comment := range file.Comments {
+		commentLine := pass.Fset.Position(comment.Pos()).Line
+		if previousLine < commentLine && commentLine < currentLine {
+			return true
+		}
+	}
+
+	return false
 }
 
 // statementSpacingReason selects one diagnostic for the boundary. Feeder

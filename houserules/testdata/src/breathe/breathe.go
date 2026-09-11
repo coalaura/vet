@@ -6,6 +6,34 @@ type request struct {
 	RunTarget string
 }
 
+type worker struct{}
+
+func functionDeclarationSpacingViolation() {}
+func secondFunctionDeclaration()           {} // want `missing blank line between function declarations`
+
+func (worker) methodSpacingViolation() {}
+func (worker) secondMethod()           {} // want `missing blank line between function declarations`
+
+func separatedSimpleErrorCheck() error {
+	_, err := thing()
+
+	if err != nil { // want `blank line before simple error check`
+		return err
+	}
+
+	return nil
+}
+
+func commentedSimpleErrorCheck() error {
+	_, err := thing()
+	// The comment is not an empty line.
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func violations(ready bool, count int) {
 	if ready {
 		count++
