@@ -62,6 +62,26 @@ type Diagnostic struct {
 	Message  string    `json:"message"`
 }
 
+const (
+	spacingFixNone spacingFix = iota
+	spacingFixInsert
+	spacingFixRemove
+)
+
+type spacingFix uint8
+
+type fileEdit struct {
+	NewText string
+	Start   int
+	End     int
+}
+
+type fixedFile struct {
+	Path string
+	Data []byte
+	Mode os.FileMode
+}
+
 type lintOptions struct {
 	Packages    []string
 	Checks      string
@@ -75,6 +95,7 @@ type lintOptions struct {
 	ShowIgnored bool
 	Tests       bool
 	CGO         bool
+	Fix         bool
 }
 
 var Version = "dev"
@@ -88,6 +109,7 @@ func main() {
 		cgoEnabled  bool
 		explain     string
 		fail        = "all"
+		fix         bool
 		goVersion   = "module"
 		listChecks  bool
 		showIgnored bool
@@ -132,6 +154,11 @@ func main() {
 				Usage:       "comma-separated list of checks that can cause a non-zero exit status",
 				Value:       "all",
 				Destination: &fail,
+			},
+			&cli.BoolFlag{
+				Name:        "fix",
+				Usage:       "apply safe automatic fixes before reporting remaining issues",
+				Destination: &fix,
 			},
 			&cli.StringFlag{
 				Name:        "go",
@@ -190,6 +217,7 @@ func main() {
 				Checks:      checks,
 				Explain:     explain,
 				Fail:        fail,
+				Fix:         fix,
 				GoVersion:   goVersion,
 				GOARCH:      targetArch,
 				GOOS:        targetOS,
@@ -237,13 +265,39 @@ func run(opts lintOptions) (int, error) {
 
 	opts.Tags = tags
 
-	cmd := newLintCommand()
-
-	cmd.ParseFlags(forceJSONFormat(buildLintArgs(opts)))
-
-	out, code, err := captureCommandOutput(cmd.Execute)
+	out, code, err := executeLint(opts)
 	if err != nil {
 		return 2, err
+	}
+
+	if opts.Fix && looksLikeJSONStream(out) {
+		diagnostics, decodeErr := decodeDiagnostics(out)
+		if decodeErr != nil {
+			return 2, fmt.Errorf("decode diagnostics for fixes: %w", decodeErr)
+		}
+
+		fixedCount, fixErr := applyAutomaticFixes(diagnostics)
+		if fixErr != nil {
+			return 2, fmt.Errorf("apply fixes: %w", fixErr)
+		}
+
+		if fixedCount > 0 {
+			suffix := "s"
+
+			if fixedCount == 1 {
+				suffix = ""
+			}
+
+			_, err = fmt.Fprintf(os.Stdout, "\x1b[32m::\x1b[0m fixed %d spacing issue%s\n", fixedCount, suffix)
+			if err != nil {
+				return 2, fmt.Errorf("write fix summary: %w", err)
+			}
+
+			out, code, err = executeLint(opts)
+			if err != nil {
+				return 2, err
+			}
+		}
 	}
 
 	if code == 0 && len(bytes.TrimSpace(out)) == 0 {
@@ -293,6 +347,175 @@ func run(opts lintOptions) (int, error) {
 	}
 
 	return code, nil
+}
+
+func executeLint(opts lintOptions) ([]byte, int, error) {
+	cmd := newLintCommand()
+
+	cmd.ParseFlags(forceJSONFormat(buildLintArgs(opts)))
+
+	return captureCommandOutput(cmd.Execute)
+}
+
+func applyAutomaticFixes(diagnostics []Diagnostic) (int, error) {
+	fixesByFile := make(map[string]map[int]spacingFix)
+
+	for _, diagnostic := range diagnostics {
+		fix := automaticSpacingFix(diagnostic)
+		if fix == spacingFixNone || diagnostic.Location.Line < 2 {
+			continue
+		}
+
+		path, err := filepath.Abs(diagnostic.Location.File)
+		if err != nil {
+			return 0, fmt.Errorf("resolve %s: %w", diagnostic.Location.File, err)
+		}
+
+		path = filepath.Clean(path)
+
+		fileFixes := fixesByFile[path]
+		if fileFixes == nil {
+			fileFixes = make(map[int]spacingFix)
+			fixesByFile[path] = fileFixes
+		}
+
+		existing, exists := fileFixes[diagnostic.Location.Line]
+		if exists && existing != fix {
+			delete(fileFixes, diagnostic.Location.Line)
+
+			continue
+		}
+
+		fileFixes[diagnostic.Location.Line] = fix
+	}
+
+	files := slices.Sorted(maps.Keys(fixesByFile))
+	pending := make([]fixedFile, 0, len(files))
+	fixedCount := 0
+
+	for _, path := range files {
+		if isGeneratedFile(path) {
+			continue
+		}
+
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return 0, fmt.Errorf("read %s: %w", path, err)
+		}
+
+		updated, count := applySpacingFixes(contents, fixesByFile[path])
+		if count == 0 {
+			continue
+		}
+
+		info, err := os.Stat(path)
+		if err != nil {
+			return 0, fmt.Errorf("stat %s: %w", path, err)
+		}
+
+		pending = append(pending, fixedFile{
+			Path: path,
+			Data: updated,
+			Mode: info.Mode(),
+		})
+		fixedCount += count
+	}
+
+	for _, file := range pending {
+		err := os.WriteFile(file.Path, file.Data, file.Mode)
+		if err != nil {
+			return 0, fmt.Errorf("write %s: %w", file.Path, err)
+		}
+	}
+
+	return fixedCount, nil
+}
+
+func automaticSpacingFix(diagnostic Diagnostic) spacingFix {
+	if diagnostic.Code != "breathe" {
+		return spacingFixNone
+	}
+
+	if strings.HasPrefix(diagnostic.Message, "missing blank line ") {
+		return spacingFixInsert
+	}
+
+	if diagnostic.Message == "blank line before simple error check" {
+		return spacingFixRemove
+	}
+
+	return spacingFixNone
+}
+
+func applySpacingFixes(contents []byte, fixes map[int]spacingFix) ([]byte, int) {
+	lineStarts := make([]int, 1, bytes.Count(contents, []byte{'\n'})+1)
+
+	for index, value := range contents {
+		if value == '\n' && index+1 < len(contents) {
+			lineStarts = append(lineStarts, index+1)
+		}
+	}
+
+	edits := make([]fileEdit, 0, len(fixes))
+
+	for line, fix := range fixes {
+		if line < 2 || line > len(lineStarts) {
+			continue
+		}
+
+		previousStart := lineStarts[line-2]
+		currentStart := lineStarts[line-1]
+		previousLine := contents[previousStart:currentStart]
+		previousIsBlank := len(bytes.TrimSpace(previousLine)) == 0
+
+		switch fix {
+		case spacingFixInsert:
+			if previousIsBlank {
+				continue
+			}
+
+			newline := "\n"
+
+			if currentStart >= 2 && contents[currentStart-2] == '\r' {
+				newline = "\r\n"
+			}
+
+			edits = append(edits, fileEdit{Start: currentStart, End: currentStart, NewText: newline})
+		case spacingFixRemove:
+			if !previousIsBlank {
+				continue
+			}
+
+			edits = append(edits, fileEdit{Start: previousStart, End: currentStart})
+		}
+	}
+
+	if len(edits) == 0 {
+		return contents, 0
+	}
+
+	slices.SortFunc(edits, func(first, second fileEdit) int {
+		return cmp.Compare(first.Start, second.Start)
+	})
+
+	capacity := len(contents)
+
+	for _, edit := range edits {
+		capacity += len(edit.NewText) - (edit.End - edit.Start)
+	}
+
+	updated := make([]byte, 0, capacity)
+	cursor := 0
+
+	for _, edit := range edits {
+		updated = append(updated, contents[cursor:edit.Start]...)
+		updated = append(updated, edit.NewText...)
+		cursor = edit.End
+	}
+
+	updated = append(updated, contents[cursor:]...)
+
+	return updated, len(edits)
 }
 
 func setBuildTarget(targetOS, targetArch string, cgoEnabled bool, tags string) (string, error) {

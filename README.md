@@ -30,6 +30,8 @@ CGO is disabled by default. Enable it with `./vet --cgo`; vet configures Zig as 
 
 With no package patterns, vet analyzes `./...`. You can pass explicit package patterns and the options shown by `vet --help`. The tool forces JSON output internally and prints compact lines.
 
+Use `./vet --fix` to apply safe automatic fixes before reporting any remaining issues. Fix mode currently handles unambiguous `breathe` spacing changes: it inserts required blank lines and removes an unwanted blank line only when that line is directly adjacent to a simple error check. More involved diagnostics are left unchanged for manual correction.
+
 ## Exit codes
 
 - `0` no issues
