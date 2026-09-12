@@ -103,6 +103,20 @@ func allowedRelatedReceiverCondition(state feederState) {
 	}
 }
 
+func allowedIncrementCondition(index int, input []int) {
+	index++
+	if index == len(input) {
+		work()
+	}
+}
+
+func unrelatedIncrementCondition(index, limit int) {
+	index++
+	if limit > 0 { // want `missing blank line before control-flow block`
+		work()
+	}
+}
+
 func allowedSeparatedFeeder() {
 	work()
 	value := something()

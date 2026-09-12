@@ -352,22 +352,22 @@ func introductionGroupStart(pass *analysis.Pass, statements []ast.Stmt, index in
 	return start
 }
 
-// introduces reports whether previous is an assignment whose results
-// appear in the header of the control-flow statement next.
+// introduces reports whether previous updates a value that appears in the
+// header of the control-flow statement next.
 func introduces(pass *analysis.Pass, previous, next ast.Stmt) bool {
 	if !isIf(next) {
 		return false
 	}
 
-	assignment, ok := unlabel(previous).(*ast.AssignStmt)
-	if !ok {
-		return false
-	}
-
-	for _, target := range assignment.Lhs {
-		if headerUsesExpression(pass, next, target) {
-			return true
+	switch statement := unlabel(previous).(type) {
+	case *ast.AssignStmt:
+		for _, target := range statement.Lhs {
+			if headerUsesExpression(pass, next, target) {
+				return true
+			}
 		}
+	case *ast.IncDecStmt:
+		return headerUsesExpression(pass, next, statement.X)
 	}
 
 	return false
