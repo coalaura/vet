@@ -1,0 +1,14 @@
+package parameters
+
+type archive struct{}
+
+func wrapped(value string, count int) { // want `function parameters span multiple lines`
+}
+
+func (archive) method(value string) { // want `function parameters span multiple lines`
+}
+
+func commented(
+	value string, // Keep this explanation.
+) { // want `function parameters span multiple lines`
+}

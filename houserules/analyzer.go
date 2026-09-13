@@ -1,7 +1,9 @@
 package houserules
 
 import (
+	"bytes"
 	"go/ast"
+	"go/format"
 	"go/token"
 
 	"golang.org/x/tools/go/analysis"
@@ -25,6 +27,8 @@ func run(pass *analysis.Pass) (any, error) {
 
 		ast.Inspect(file, func(current ast.Node) bool {
 			switch node := current.(type) {
+			case *ast.FuncDecl:
+				checkFunctionParameters(pass, file, node)
 			case *ast.BlockStmt:
 				checkStatementVarDeclarations(pass, node.List)
 			case *ast.CaseClause:
@@ -91,6 +95,61 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 
 	return nil, nil
+}
+
+func checkFunctionParameters(pass *analysis.Pass, file *ast.File, declaration *ast.FuncDecl) {
+	parameters := declaration.Type.Params
+
+	if pass.Fset.Position(parameters.Opening).Line == pass.Fset.Position(parameters.Closing).Line {
+		return
+	}
+
+	diagnostic := analysis.Diagnostic{
+		Pos:     parameters.Closing,
+		Message: "function parameters span multiple lines: define them on one line",
+	}
+
+	if !hasComments(file, parameters.Pos(), parameters.End()) {
+		replacement, err := formatFunctionParameters(parameters)
+		if err == nil {
+			diagnostic.SuggestedFixes = []analysis.SuggestedFix{
+				{
+					Message: "put function parameters on one line",
+					TextEdits: []analysis.TextEdit{
+						{Pos: parameters.Pos(), End: parameters.End(), NewText: replacement},
+					},
+				},
+			}
+		}
+	}
+
+	pass.Report(diagnostic)
+}
+
+func formatFunctionParameters(parameters *ast.FieldList) ([]byte, error) {
+	functionType := &ast.FuncType{
+		Func:   token.Pos(1),
+		Params: parameters,
+	}
+
+	var output bytes.Buffer
+
+	err := format.Node(&output, token.NewFileSet(), functionType)
+	if err != nil {
+		return nil, err
+	}
+
+	return output.Bytes()[len("func"):], nil
+}
+
+func hasComments(file *ast.File, start, end token.Pos) bool {
+	for _, comment := range file.Comments {
+		if comment.Pos() < end && comment.End() > start {
+			return true
+		}
+	}
+
+	return false
 }
 
 func checkFileVarDeclarations(pass *analysis.Pass, declarations []ast.Decl) {

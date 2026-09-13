@@ -4,8 +4,20 @@ type namedCase struct {
 	Name string
 }
 
+func (namedCase) wrappedMethod(
+	value string,
+) { // want `function parameters span multiple lines`
+	_ = value
+}
+
 var packageFirst int
 var packageSecond int // want `consecutive var declarations`
+
+func wrappedFunction(
+	value string,
+) { // want `function parameters span multiple lines`
+	_ = value
+}
 
 func violations(lookup map[string]int) {
 	const width = 0.25 // want `function-local const`
@@ -64,6 +76,10 @@ func allowed(lookup map[string]int, value any, values []int, firstIndex, secondI
 	_ = second
 	_ = third
 	_ = fourth
+}
+
+func (namedCase) compactMethod(value string) {
+	_ = value
 }
 
 func work() error {

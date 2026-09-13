@@ -40,6 +40,23 @@ var houseRulesExplainPage = explainPage{
 	description: "Project-specific Go conventions that keep declarations and control flow explicit.",
 	sections: []explainSection{
 		{
+			title:       "Function Parameters On One Line",
+			description: "Keep function and method parameter declarations on one line, regardless of signature length. Fix mode rewrites parameter lists that do not contain comments.",
+			bad: code(
+				"func archive(",
+				"\tctx context.Context,",
+				"\treference string,",
+				") error {",
+				"\treturn nil",
+				"}",
+			),
+			good: code(
+				"func archive(ctx context.Context, reference string) error {",
+				"\treturn nil",
+				"}",
+			),
+		},
+		{
 			title:       "Assign Before Control Flow",
 			description: "Assign values before if, switch and type switch statements. Two-value map lookups and type assertions in if statements are allowed.",
 			bad: code(
