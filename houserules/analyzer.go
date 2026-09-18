@@ -31,6 +31,8 @@ func run(pass *analysis.Pass) (any, error) {
 				checkFunctionParameters(pass, file, node)
 			case *ast.BlockStmt:
 				checkStatementVarDeclarations(pass, node.List)
+			case *ast.ExprStmt:
+				checkImmediatelyInvokedFunction(pass, node)
 			case *ast.CaseClause:
 				checkStatementVarDeclarations(pass, node.Body)
 			case *ast.CommClause:
@@ -124,6 +126,20 @@ func checkFunctionParameters(pass *analysis.Pass, file *ast.File, declaration *a
 	}
 
 	pass.Report(diagnostic)
+}
+
+func checkImmediatelyInvokedFunction(pass *analysis.Pass, statement *ast.ExprStmt) {
+	call, ok := unparen(statement.X).(*ast.CallExpr)
+	if !ok {
+		return
+	}
+
+	_, ok = unparen(call.Fun).(*ast.FuncLit)
+	if !ok {
+		return
+	}
+
+	pass.Reportf(call.Fun.Pos(), "immediately invoked function literal: use ordinary control flow or a named helper")
 }
 
 func formatFunctionParameters(parameters *ast.FieldList) ([]byte, error) {

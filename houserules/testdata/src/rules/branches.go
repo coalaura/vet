@@ -41,6 +41,32 @@ func functionLiteralGoto() {
 	}
 }
 
+func immediatelyInvokedFunctionLiteral(ready bool) {
+	changed := false
+
+	func() { // want `immediately invoked function literal`
+		if !ready {
+			return
+		}
+
+		changed = true
+	}()
+
+	(func() { // want `immediately invoked function literal`
+		changed = true
+	})()
+
+	_ = changed
+}
+
+func allowedFunctionLiteralCalls() {
+	callback := func() {}
+	callback()
+
+	defer func() {}()
+	go func() {}()
+}
+
 func allowedOtherBranches(value int) {
 outer:
 	for {
