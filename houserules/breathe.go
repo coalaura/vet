@@ -30,8 +30,10 @@ func runBreathe(pass *analysis.Pass) (any, error) {
 				checkSpacing(pass, file, node.Body)
 			case *ast.CommClause:
 				checkSpacing(pass, file, node.Body)
+			case *ast.FuncDecl:
+				checkFunctionBody(pass, node.Body, node.Pos())
 			case *ast.FuncLit:
-				checkFunctionLiteralBody(pass, node)
+				checkFunctionBody(pass, node.Body, node.Pos())
 			case *ast.IfStmt:
 				checkConditionFunctionLiterals(pass, node.Cond)
 			case *ast.ForStmt:
@@ -245,18 +247,18 @@ func statementSpacingReason(pass *analysis.Pass, statements []ast.Stmt, index in
 	return ""
 }
 
-func checkFunctionLiteralBody(pass *analysis.Pass, function *ast.FuncLit) {
-	if len(function.Body.List) == 0 {
+func checkFunctionBody(pass *analysis.Pass, body *ast.BlockStmt, position token.Pos) {
+	if body == nil || len(body.List) == 0 {
 		return
 	}
 
-	openingLine := pass.Fset.Position(function.Body.Lbrace).Line
-	closingLine := pass.Fset.Position(function.Body.Rbrace).Line
-	firstLine := pass.Fset.Position(function.Body.List[0].Pos()).Line
-	lastLine := pass.Fset.Position(function.Body.List[len(function.Body.List)-1].End()).Line
+	openingLine := pass.Fset.Position(body.Lbrace).Line
+	closingLine := pass.Fset.Position(body.Rbrace).Line
+	firstLine := pass.Fset.Position(body.List[0].Pos()).Line
+	lastLine := pass.Fset.Position(body.List[len(body.List)-1].End()).Line
 
 	if openingLine == firstLine || lastLine == closingLine {
-		pass.Reportf(function.Pos(), "function literal body must start and end on separate lines")
+		pass.Reportf(position, "function literal body must start and end on separate lines")
 	}
 }
 

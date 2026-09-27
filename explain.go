@@ -178,6 +178,24 @@ var breatheExplainPage = explainPage{
 			),
 		},
 		{
+			title:       "Function And Method Bodies",
+			description: "Non-empty function and method bodies must start and end on separate lines. Empty bodies may remain on one line.",
+			bad: code(
+				"func stuff() int { return 1 }",
+				"",
+				"func (w *worker) Close() error { return nil }",
+			),
+			good: code(
+				"func stuff() int {",
+				"\treturn 1",
+				"}",
+				"",
+				"func (w *worker) Close() error {",
+				"\treturn nil",
+				"}",
+			),
+		},
+		{
 			title:       "Simple Error Checks",
 			description: "Keep a plain error != nil check directly below the assignment that produced the error.",
 			bad: code(

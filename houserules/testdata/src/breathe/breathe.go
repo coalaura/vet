@@ -266,6 +266,10 @@ func inlineFunctionLiteralViolation() {
 	_ = execute(func() bool { return true }) // want `function literal body must start and end on separate lines`
 }
 
+func stuff() int { return 1 } // want `function literal body must start and end on separate lines`
+
+func (w *worker) Close() error { return nil } // want `function literal body must start and end on separate lines`
+
 func allowedEmptyFunction() {}
 
 func allowedEmptyFunctionLiteral() {
