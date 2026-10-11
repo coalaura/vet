@@ -1,6 +1,6 @@
 module github.com/coalaura/vet
 
-go 1.27.0
+go 1.27.2
 
 require (
 	github.com/charithe/durationcheck v0.0.11
