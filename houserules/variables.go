@@ -111,7 +111,7 @@ func isNilInitializer(pass *analysis.Pass, expression ast.Expr) bool {
 	}
 
 	conversion, ok := expression.(*ast.CallExpr)
-	if !ok || len(conversion.Args) != 1 || !pass.TypesInfo.Types[unparen(conversion.Fun)].IsType() {
+	if !ok || len(conversion.Args) != 1 || value.Type == nil || !pass.TypesInfo.Types[unparen(conversion.Fun)].IsType() {
 		return false
 	}
 
@@ -129,6 +129,10 @@ func isNilInitializer(pass *analysis.Pass, expression ast.Expr) bool {
 		}
 	case *types.Interface:
 		argument := pass.TypesInfo.Types[unparen(conversion.Args[0])]
+		if argument.Type == nil {
+			return false
+		}
+
 		_, interfaceArgument := argument.Type.Underlying().(*types.Interface)
 
 		// Boxing a typed nil pointer/slice/etc. creates a non-nil interface.

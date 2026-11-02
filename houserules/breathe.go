@@ -15,6 +15,11 @@ var Breathe = &analysis.Analyzer{
 }
 
 func runBreathe(pass *analysis.Pass) (any, error) {
+	pass, err := sourcePass(pass)
+	if err != nil {
+		return nil, err
+	}
+
 	for _, file := range pass.Files {
 		if ast.IsGenerated(file) {
 			continue
@@ -113,7 +118,9 @@ func isErrorCheck(pass *analysis.Pass, previous, next ast.Stmt) bool {
 	}
 
 	errorObject := types.Universe.Lookup("error")
-	if errorObject == nil || !types.AssignableTo(pass.TypesInfo.TypeOf(checked), errorObject.Type()) {
+	checkedType := pass.TypesInfo.TypeOf(checked)
+
+	if errorObject == nil || checkedType == nil || !types.AssignableTo(checkedType, errorObject.Type()) {
 		return false
 	}
 

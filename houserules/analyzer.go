@@ -16,6 +16,11 @@ var Analyzer = &analysis.Analyzer{
 }
 
 func run(pass *analysis.Pass) (any, error) {
+	pass, err := sourcePass(pass)
+	if err != nil {
+		return nil, err
+	}
+
 	for _, file := range pass.Files {
 		if ast.IsGenerated(file) {
 			continue
